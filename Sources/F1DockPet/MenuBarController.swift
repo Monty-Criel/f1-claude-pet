@@ -22,6 +22,9 @@ final class MenuBarController {
 
     /// Lets the app delegate move the second car to the opposite end.
     var onPitHomeChanged: ((TrackView.PitHome) -> Void)?
+
+    /// Applies a new chat panel size to every open panel.
+    var onChatSizeChanged: ((ChatController.Size) -> Void)?
     private var secondCandidates: [Transcript.SessionRef] = []
 
     /// Rebuilt menus throw their views away, so these are held here rather
@@ -139,6 +142,19 @@ final class MenuBarController {
         pitItem.submenu = pits
         pitItem.subtitle = "Where it parks and idles"
         menu.addItem(pitItem)
+
+        // Chat panel size.
+        let sizeItem = NSMenuItem(title: "Chat size", action: nil, keyEquivalent: "")
+        let sizes = NSMenu()
+        for choice in ChatController.Size.allCases {
+            let entry = item(choice.displayName, #selector(selectChatSize(_:)))
+            entry.representedObject = choice.rawValue
+            entry.state = ChatController.Size.selected == choice ? .on : .off
+            entry.subtitle = "\(Int(choice.width))×\(Int(choice.height))"
+            sizes.addItem(entry)
+        }
+        sizeItem.submenu = sizes
+        menu.addItem(sizeItem)
 
         // Accent colour for the panel, bubble and spinner.
         let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
@@ -266,6 +282,13 @@ final class MenuBarController {
         let index = min(TrackView.speedPresets.count - 1, max(0, sender.integerValue))
         TrackView.speedFactor = TrackView.speedPresets[index].factor
         updateSpeedLabel()
+    }
+
+    @objc private func selectChatSize(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let choice = ChatController.Size(rawValue: raw) else { return }
+        onChatSizeChanged?(choice)
+        rebuild()
     }
 
     @objc private func selectPitHome(_ sender: NSMenuItem) {
