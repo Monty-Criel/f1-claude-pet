@@ -185,15 +185,21 @@ final class TrackView: NSView {
         didSet { needsDisplay = true }
     }
 
-    /// How hard the car drives while Claude works, 0.25×–2×, set by the speed
-    /// slider in the menu bar. Scales top speed only — braking, stints and
-    /// smoke all key off that, so the whole thing stays coherent.
+    /// How hard the car drives while Claude works, set by the speed slider in
+    /// the menu bar. Scales top speed, acceleration and braking together, so
+    /// the car actually reaches the pace it is given before the Dock runs out.
+    static let speedRange: ClosedRange<CGFloat> = 0.25...5.0
+
     static var speedFactor: CGFloat {
         get {
             let stored = UserDefaults.standard.object(forKey: "speedFactor") as? Double
-            return CGFloat(min(2.0, max(0.25, stored ?? 1.0)))
+            return min(speedRange.upperBound,
+                       max(speedRange.lowerBound, CGFloat(stored ?? 1.0)))
         }
-        set { UserDefaults.standard.set(Double(min(2, max(0.25, newValue))), forKey: "speedFactor") }
+        set {
+            let clamped = min(speedRange.upperBound, max(speedRange.lowerBound, newValue))
+            UserDefaults.standard.set(Double(clamped), forKey: "speedFactor")
+        }
     }
 
     /// The primary car's home end, as picked in the menu bar.
@@ -679,8 +685,16 @@ final class TrackView: NSView {
             }
             // Gentler than a real car would manage: sharp acceleration and
             // late braking are exactly what catches the eye.
-            let accel: CGFloat = launchBurst > 0 ? 1400 : (livelyMode ? 380 : 210)
-            let brake: CGFloat = livelyMode ? 620 : 300
+            //
+            // Acceleration scales with the speed setting, and faster than
+            // linearly: at high multipliers a car that accelerated at the
+            // stock rate would spend the whole Dock still winding up and never
+            // reach the ceiling it was given.
+            let pace = TrackView.speedFactor
+            let accel: CGFloat = launchBurst > 0
+                ? 1400 * pace
+                : (livelyMode ? 380 : 210) * pace * pace
+            let brake: CGFloat = (livelyMode ? 620 : 300) * pace * pace
 
             let distanceToEnd = direction > 0
                 ? lane.maxX - (x + carSize.width)

@@ -209,8 +209,8 @@ final class MenuBarController {
         view.addSubview(speedLabel)
 
         speedSlider.frame = NSRect(x: 21, y: 4, width: 178, height: 20)
-        speedSlider.minValue = 0.25
-        speedSlider.maxValue = 2.0
+        speedSlider.minValue = Double(TrackView.speedRange.lowerBound)
+        speedSlider.maxValue = Double(TrackView.speedRange.upperBound)
         speedSlider.doubleValue = Double(TrackView.speedFactor)
         speedSlider.isContinuous = true
         speedSlider.target = self
@@ -228,8 +228,10 @@ final class MenuBarController {
         case ..<0.6:  name = "Formation lap"
         case ..<0.95: name = "Cruising"
         case ..<1.35: name = "Race pace"
-        case ..<1.75: name = "Push"
-        default:      name = "Qualifying"
+        case ..<2.0:  name = "Push"
+        case ..<3.0:  name = "Qualifying"
+        case ..<4.2:  name = "Slipstream"
+        default:      name = "Ludicrous"
         }
         speedLabel.stringValue = String(format: "%@ · %.2f×", name, factor)
     }

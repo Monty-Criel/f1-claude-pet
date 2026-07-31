@@ -280,6 +280,20 @@ enum Transcript {
         }
     }
 
+    /// Whether a session looks like it is mid-turn right now.
+    ///
+    /// The hooks only report the session Claude Code is currently driving, so
+    /// any other tab has to be judged from its transcript: Claude appends to it
+    /// continuously while working and not at all when idle, which makes a
+    /// recent write a reliable "still going" signal.
+    static func isWorking(id: String, cwd: String) -> Bool {
+        guard let url = url(id: id, cwd: cwd),
+              let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                  .contentModificationDate
+        else { return false }
+        return Date().timeIntervalSince(modified) < 12
+    }
+
     static func turnStats(id: String, cwd: String) -> TurnStats {
         var tokens = 0
         var lastTool: String?

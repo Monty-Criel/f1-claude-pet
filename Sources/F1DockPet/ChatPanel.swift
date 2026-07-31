@@ -457,8 +457,13 @@ final class ChatController: NSObject {
     /// The spinner row: wheel, verb, elapsed, tokens — shown only while the
     /// session the hooks are watching is actually mid-turn.
     private func updateWorkingRow(id: String, cwd: String, state: PetState) {
+        // The hooks only speak for the session the car is following; every
+        // other tab is judged from its own transcript, so the wheel spins on
+        // whichever conversation you are actually looking at.
         let isLive = id == StateChannel.readSession()?.id
-        let working = isLive && (state == .launch || state == .racing || state == .boost)
+        let working = isLive
+            ? (state == .launch || state == .racing || state == .boost)
+            : Transcript.isWorking(id: id, cwd: cwd)
 
         spinner.isSpinning = working
         workLabel.isHidden = !working
