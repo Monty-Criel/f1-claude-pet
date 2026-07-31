@@ -89,6 +89,9 @@ final class TrackView: NSView {
     private var stintLapsRemaining: Int = 1
     /// Bottoming-out sparks, struck at random while pushing.
     private var kerbSparks: CGFloat = 0
+    /// Still carrying damage from a failure. The car limps rather than racing
+    /// until the work either finishes or starts over.
+    private var isDamaged = false
     /// Seconds left of the locked-brake slide that opens a failure at speed.
     private var crashSlide: CGFloat = 0
     /// How long that slide lasted, so the breakdown that follows still plays
@@ -194,6 +197,28 @@ final class TrackView: NSView {
     /// the menu bar. Scales top speed, acceleration and braking together, so
     /// the car actually reaches the pace it is given before the Dock runs out.
     static let speedRange: ClosedRange<CGFloat> = 0.25...5.0
+
+    /// The slider's detents. Named stops beat a free scrub here: the useful
+    /// settings are far apart, and a slot you can feel is easier to return to
+    /// than a number you have to re-find.
+    static let speedPresets: [(factor: CGFloat, name: String)] = [
+        (0.25, "Formation lap"),
+        (0.50, "Cruising"),
+        (0.75, "Steady"),
+        (1.00, "Race pace"),
+        (1.50, "Push"),
+        (2.50, "Qualifying"),
+        (3.50, "Slipstream"),
+        (5.00, "Ludicrous"),
+    ]
+
+    /// Nearest preset to whatever is stored — the slider has to land on one.
+    static var speedPresetIndex: Int {
+        let current = speedFactor
+        return speedPresets.enumerated()
+            .min { abs($0.element.factor - current) < abs($1.element.factor - current) }?
+            .offset ?? 3
+    }
 
     static var speedFactor: CGFloat {
         get {
@@ -430,10 +455,15 @@ final class TrackView: NSView {
         if new != .spin { puncture = 0; engineFire = 0 }
         if new != .launch { launchSparks = 0 }
         if new != .racing { launchBurst = 0; kerbSparks = 0 }
+        // Repaired in the pits: a fresh prompt or a finished job puts the car
+        // back on the pace. Carrying on after a failure does not.
+        if new == .launch || new == .victory { isDamaged = false }
+
         // Every stretch of work opens with a push lap, and work is run in
-        // whole laps of the Dock rather than to a stopwatch.
+        // whole laps of the Dock rather than to a stopwatch. A damaged car
+        // limps home instead.
         if new == .racing {
-            stint = .hotLap
+            stint = isDamaged ? .coolDown : .hotLap
             stintLapsRemaining = 1
             lapMode = .full
             fullLapReachedFarEnd = false
@@ -465,6 +495,7 @@ final class TrackView: NSView {
             // already crawling just stops.
             crashSlide = velocity > 60 ? min(2.2, 0.35 + velocity / 420) : 0
             crashSlideElapsed = 0
+            isDamaged = true
         case .boost:
             break   // handled above; never becomes a resting state
         }
@@ -598,7 +629,10 @@ final class TrackView: NSView {
     private func drive(dt: CGFloat) {
         // Calm enough to sit in your peripheral vision. This is a status light
         // that happens to be a car, not a screensaver.
-        let topSpeed: CGFloat = (livelyMode ? 250 : 140) * TrackView.speedFactor
+        // A damaged car limps: whatever the slider says, it is not racing
+        // again until it has been repaired.
+        let pace = isDamaged ? min(TrackView.speedFactor, 0.35) : TrackView.speedFactor
+        let topSpeed: CGFloat = (livelyMode ? 250 : 140) * pace
         let lane = self.lane
 
         // Reading the chat beats watching the car: stop dead, exactly where it
@@ -701,7 +735,6 @@ final class TrackView: NSView {
             // linearly: at high multipliers a car that accelerated at the
             // stock rate would spend the whole Dock still winding up and never
             // reach the ceiling it was given.
-            let pace = TrackView.speedFactor
             let accel: CGFloat = launchBurst > 0
                 ? 1400 * pace
                 : (livelyMode ? 380 : 210) * pace * pace
@@ -880,7 +913,7 @@ final class TrackView: NSView {
         stintLapsRemaining -= 1
         guard stintLapsRemaining <= 0 else { return }
 
-        if stint == .hotLap {
+        if stint == .hotLap || isDamaged {
             stint = .coolDown
             stintLapsRemaining = 1          // a cool-down is always one lap
         } else {

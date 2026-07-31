@@ -208,10 +208,15 @@ final class MenuBarController {
         speedLabel.textColor = .secondaryLabelColor
         view.addSubview(speedLabel)
 
-        speedSlider.frame = NSRect(x: 21, y: 4, width: 178, height: 20)
-        speedSlider.minValue = Double(TrackView.speedRange.lowerBound)
-        speedSlider.maxValue = Double(TrackView.speedRange.upperBound)
-        speedSlider.doubleValue = Double(TrackView.speedFactor)
+        // Indexed over the presets rather than the raw multiplier, so the knob
+        // clicks into each named slot instead of landing between them.
+        speedSlider.frame = NSRect(x: 21, y: 4, width: 178, height: 22)
+        speedSlider.minValue = 0
+        speedSlider.maxValue = Double(TrackView.speedPresets.count - 1)
+        speedSlider.numberOfTickMarks = TrackView.speedPresets.count
+        speedSlider.allowsTickMarkValuesOnly = true
+        speedSlider.tickMarkPosition = .below
+        speedSlider.integerValue = TrackView.speedPresetIndex
         speedSlider.isContinuous = true
         speedSlider.target = self
         speedSlider.action = #selector(speedChanged(_:))
@@ -222,18 +227,8 @@ final class MenuBarController {
     }
 
     private func updateSpeedLabel() {
-        let factor = TrackView.speedFactor
-        let name: String
-        switch factor {
-        case ..<0.6:  name = "Formation lap"
-        case ..<0.95: name = "Cruising"
-        case ..<1.35: name = "Race pace"
-        case ..<2.0:  name = "Push"
-        case ..<3.0:  name = "Qualifying"
-        case ..<4.2:  name = "Slipstream"
-        default:      name = "Ludicrous"
-        }
-        speedLabel.stringValue = String(format: "%@ · %.2f×", name, factor)
+        let preset = TrackView.speedPresets[TrackView.speedPresetIndex]
+        speedLabel.stringValue = String(format: "%@ · %.2f×", preset.name, preset.factor)
     }
 
     private func item(_ title: String, _ action: Selector) -> NSMenuItem {
@@ -268,7 +263,8 @@ final class MenuBarController {
     /// Live while you drag: the car changes pace under the open menu, which is
     /// the only way to judge whether the setting is right.
     @objc private func speedChanged(_ sender: NSSlider) {
-        TrackView.speedFactor = CGFloat(sender.doubleValue)
+        let index = min(TrackView.speedPresets.count - 1, max(0, sender.integerValue))
+        TrackView.speedFactor = TrackView.speedPresets[index].factor
         updateSpeedLabel()
     }
 
