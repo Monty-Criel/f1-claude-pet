@@ -24,7 +24,15 @@ if let i = CommandLine.arguments.firstIndex(of: "--export-sprite") {
     let deflation = CommandLine.arguments.firstIndex(of: "--deflate").flatMap { i -> CGFloat? in
         CommandLine.arguments.count > i + 1 ? CGFloat(Double(CommandLine.arguments[i + 1]) ?? 0) : nil
     } ?? 0
-    let ok = CarRenderer.exportPNG(car: car, to: path, deflation: deflation)
+    // `--detail 2 --zoom 3` control rasterisation fineness and magnification.
+    let detail = CommandLine.arguments.firstIndex(of: "--detail").flatMap { i -> CGFloat? in
+        CommandLine.arguments.count > i + 1 ? CGFloat(Double(CommandLine.arguments[i + 1]) ?? 1) : nil
+    } ?? 1
+    let zoom = CommandLine.arguments.firstIndex(of: "--zoom").flatMap { i -> CGFloat? in
+        CommandLine.arguments.count > i + 1 ? CGFloat(Double(CommandLine.arguments[i + 1]) ?? 8) : nil
+    } ?? 8
+    let ok = CarRenderer.exportPNG(car: car, to: path, scale: zoom,
+                                   deflation: deflation, detail: detail)
     print(ok ? "wrote \(path) for \(car.displayName)" : "failed to write \(path)")
     exit(ok ? 0 : 1)
 }
@@ -39,8 +47,10 @@ if let i = CommandLine.arguments.firstIndex(of: "--export-sprite") {
 //   * never exit 2 — that is Claude Code's "block this tool call" signal, and a
 //     typo in a hook must never be able to stop real work.
 if let i = CommandLine.arguments.firstIndex(of: "--notify") {
-    guard CommandLine.arguments.count > i + 1,
-          let state = PetState(rawValue: CommandLine.arguments[i + 1]) else {
+    // "crash" reads better than the historical "spin"; accept both.
+    let rawArg = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
+    let normalised = rawArg == "crash" ? "spin" : rawArg
+    guard let state = PetState(rawValue: normalised) else {
         let names = PetState.allCases.map(\.rawValue).joined(separator: ", ")
         FileHandle.standardError.write(Data("usage: --notify <\(names)> [--message <text>]\n".utf8))
         exit(1)

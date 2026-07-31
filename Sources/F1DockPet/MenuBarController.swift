@@ -74,7 +74,7 @@ final class MenuBarController {
 
         // A second car, parked on the left, bound to another session — its
         // bubble shows that session's name and clicking it opens that chat.
-        let secondItem = NSMenuItem(title: "Second car", action: nil, keyEquivalent: "")
+        let secondItem = NSMenuItem(title: "Second car (Beta)", action: nil, keyEquivalent: "")
         let second = NSMenu()
         let currentSecond = currentSecondaryId?()
 
@@ -105,6 +105,19 @@ final class MenuBarController {
         secondItem.submenu = second
         menu.addItem(secondItem)
 
+        // Pirelli compound — worn by the F1 cars only; GT3s keep their own rubber.
+        let tyresItem = NSMenuItem(title: "Tyres", action: nil, keyEquivalent: "")
+        let tyres = NSMenu()
+        for compound in TyreCompound.allCases {
+            let entry = item(compound.displayName, #selector(selectCompound(_:)))
+            entry.representedObject = compound.rawValue
+            entry.state = TyreCompound.selected == compound ? .on : .off
+            tyres.addItem(entry)
+        }
+        tyresItem.submenu = tyres
+        tyresItem.subtitle = "F1 cars only"
+        menu.addItem(tyresItem)
+
         // Behaviour
         let lively = item("Lively mode", #selector(toggleLively))
         lively.state = (trackView?.livelyMode ?? false) ? .on : .off
@@ -117,7 +130,7 @@ final class MenuBarController {
         let testItem = NSMenuItem(title: "Trigger", action: nil, keyEquivalent: "")
         let tests = NSMenu()
         for state in PetState.allCases {
-            let entry = item(state.rawValue.capitalized, #selector(trigger(_:)))
+            let entry = item(state.displayName, #selector(trigger(_:)))
             entry.representedObject = state.rawValue
             entry.subtitle = state.summary
             tests.addItem(entry)
@@ -150,6 +163,13 @@ final class MenuBarController {
               let car = CarRegistry.car(id: id) else { return }
         trackView?.car = car
         CarRegistry.selected = car      // remembered across restarts
+        rebuild()
+    }
+
+    @objc private func selectCompound(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let compound = TyreCompound(rawValue: raw) else { return }
+        TyreCompound.selected = compound
         rebuild()
     }
 

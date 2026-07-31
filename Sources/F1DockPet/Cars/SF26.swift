@@ -44,6 +44,24 @@ struct SF26: Car {
         drawNose(ctx)
         drawCockpit(ctx)
         drawFrontWing(ctx)
+        drawBroadcastKit(ctx)
+    }
+
+    /// Broadcast kit: T-cam, Leclerc's 16, silver halo edge, mirror.
+    private func drawBroadcastKit(_ ctx: CGContext) {
+        let silver = NSColor(srgbRed: 0.72, green: 0.76, blue: 0.82, alpha: 1)
+        ctx.fillRect(NSColor(white: 0.08, alpha: 1), 28.2, 14.1, 3.2, 1.2)
+        ctx.fillRect(bright, 31.4, 14.2, 0.9, 1.0)
+        // 16 on the nose, abstracted to two white bars.
+        ctx.fillRect(white, 55.6, 4.7, 0.8, 2.3)
+        ctx.fillRect(white, 57.0, 4.7, 1.1, 2.3)
+        ctx.fillRect(black, 57.3, 5.4, 0.5, 0.9)
+        ctx.stroke(silver, width: 0.5) { p in
+            p.move(to: pt(32.6, 10.4))
+            p.addCurve(to: pt(43.8, 9.2), control1: pt(35, 13.1), control2: pt(42, 12.3))
+        }
+        ctx.fillRect(black, 43.6, 10.6, 1.6, 0.9)
+        ctx.fillRect(white, 43.8, 10.8, 1.0, 0.5)
     }
 
     // MARK: - parts
@@ -75,6 +93,10 @@ struct SF26: Car {
         ctx.fillRect(deep, 15, 9.8, 5, 0.5)       // louvres
         ctx.fillRect(deep, 21, 11.2, 4, 0.5)
 
+        // Prancing-horse shield on the engine cover flank.
+        ctx.fillRect(yellow, 17.4, 8.9, 1.9, 2.0)
+        ctx.fillRect(black, 18.0, 9.3, 0.8, 1.2)
+
         // Squarer, taller airbox than the Red Bull.
         ctx.fill(black) { p in
             p.polygon([pt(26, 13.9), pt(32.5, 13.9), pt(32.5, 11), pt(26, 11.6)])
@@ -89,6 +111,18 @@ struct SF26: Car {
                        pt(32, 9.8), pt(22, 9.2), pt(13, 8.4)])
         }
         ctx.fillRect(deep, 13, 4, 35, 0.8)        // underside shadow
+
+        // Underfloor skirt dropping between the wheels to front-wing height:
+        // skirt, skid line along its bottom, strakes hanging toward the track.
+        ctx.fill(black) { p in
+            p.polygon([pt(23, 2.8), pt(48, 2.8), pt(48, 1.6),
+                       pt(44, 1.3), pt(26, 1.3), pt(23, 1.8)])
+        }
+        ctx.fillRect(bright, 26, 1.3, 16, 0.35)
+        ctx.fillRect(yellow, 36, 1.9, 5, 0.5)
+        ctx.fillRect(black,  43.5, 0.9, 0.7, 1.0)
+        ctx.fillRect(black,  45.5, 0.9, 0.7, 1.0)
+        ctx.fillRect(black,  47.3, 0.9, 0.7, 1.0)
     }
 
     private func drawSidepod(_ ctx: CGContext) {

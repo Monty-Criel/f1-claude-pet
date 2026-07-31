@@ -41,6 +41,8 @@ final class ChatController: NSObject {
     private var sessions: [Transcript.SessionRef] = []
     private var selected: Transcript.SessionRef?
     private let tabBar = NSView()
+    /// The Usage tab replaces the transcript with plan-limit bars.
+    private var showingUsage = false
 
     /// A panel dedicated to one session (the second car's). No tabs, no
     /// following the hooks — it is that conversation, permanently.
@@ -58,11 +60,8 @@ final class ChatController: NSObject {
     private static let width: CGFloat = 460
     private static let height: CGFloat = 340
 
-    // Team colours, lifted from the car that is currently driving.
-    private var accent: NSColor {
-        (trackView?.car as? (any GT3Model))?.livery.accent
-            ?? NSColor(srgbRed: 1.0, green: 0.82, blue: 0.0, alpha: 1)
-    }
+    // Claude orange, everywhere the panel needs an accent.
+    private var accent: NSColor { Theme.accent }
 
     init(trackView: TrackView) {
         self.trackView = trackView
@@ -88,7 +87,7 @@ final class ChatController: NSObject {
 
         let content = NSView(frame: CGRect(x: 0, y: 0, width: Self.width, height: Self.height))
         content.wantsLayer = true
-        content.layer?.backgroundColor = NSColor(srgbRed: 0.05, green: 0.06, blue: 0.08, alpha: 0.95).cgColor
+        content.layer?.backgroundColor = Theme.panelBackground.cgColor
         content.layer?.cornerRadius = 14
         content.layer?.borderWidth = 1
         content.layer?.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
@@ -213,14 +212,15 @@ final class ChatController: NSObject {
         // Park the car while you read — a panel pinned to a moving car is
         // unreadable.
         trackView?.isChatOpen = true
+        showingUsage = false
         if let fixed = fixedSession {
             sessions = [fixed]
             selected = fixed
         } else {
             let excluded = excludedSessionIds()
-            sessions = Array(Transcript.recentSessions(limit: 3 + excluded.count)
+            sessions = Array(Transcript.recentSessions(limit: 2 + excluded.count)
                 .filter { !excluded.contains($0.id) }
-                .prefix(3))
+                .prefix(2))
             selected = sessions.first { $0.id == StateChannel.readSession()?.id } ?? sessions.first
         }
         rebuildTabs()
@@ -245,43 +245,70 @@ final class ChatController: NSObject {
 
     // MARK: - anchoring
 
-    /// One button per recent session, laid out evenly.
+    /// One button per recent session plus the Usage tab, laid out evenly.
     private func rebuildTabs() {
         tabBar.subviews.forEach { $0.removeFromSuperview() }
-        guard sessions.count > 1 else { return }   // no point switching between one
+        let includeUsage = fixedSession == nil   // the second car's panel stays single-purpose
+        let count = sessions.count + (includeUsage ? 1 : 0)
+        guard count > 1 else { return }
 
         let gap: CGFloat = 6
-        let width = (tabBar.bounds.width - gap * CGFloat(sessions.count - 1)) / CGFloat(sessions.count)
+        let usageWidth: CGFloat = includeUsage ? 58 : 0
+        let sessionWidth = (tabBar.bounds.width - usageWidth - gap * CGFloat(count - 1))
+            / CGFloat(max(sessions.count, 1))
 
-        for (index, session) in sessions.enumerated() {
-            let isCurrent = session.id == selected?.id
-            let button = NSButton(frame: CGRect(x: (width + gap) * CGFloat(index), y: 0,
-                                                width: width, height: 22))
+        func makeTab(x: CGFloat, width: CGFloat, title: String, current: Bool) -> NSButton {
+            let button = NSButton(frame: CGRect(x: x, y: 0, width: width, height: 22))
             button.isBordered = false
             button.wantsLayer = true
             button.layer?.cornerRadius = 5
-            button.layer?.backgroundColor = isCurrent
+            button.layer?.backgroundColor = current
                 ? accent.withAlphaComponent(0.22).cgColor
                 : NSColor.white.withAlphaComponent(0.05).cgColor
-            button.layer?.borderWidth = isCurrent ? 1 : 0
+            button.layer?.borderWidth = current ? 1 : 0
             button.layer?.borderColor = accent.withAlphaComponent(0.55).cgColor
-
-            button.attributedTitle = NSAttributedString(string: session.label, attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 9, weight: isCurrent ? .bold : .regular),
-                .foregroundColor: isCurrent ? NSColor.white : NSColor.white.withAlphaComponent(0.55),
+            button.attributedTitle = NSAttributedString(string: title, attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 9, weight: current ? .bold : .regular),
+                .foregroundColor: current ? NSColor.white : NSColor.white.withAlphaComponent(0.55),
             ])
-            button.toolTip = "\(session.title.isEmpty ? "(untitled)" : session.title)\n\(session.cwd)"
-            button.tag = index
             button.target = self
-            button.action = #selector(selectSession(_:))
             tabBar.addSubview(button)
+            return button
+        }
+
+        for (index, session) in sessions.enumerated() {
+            let button = makeTab(x: (sessionWidth + gap) * CGFloat(index), width: sessionWidth,
+                                 title: session.label,
+                                 current: !showingUsage && session.id == selected?.id)
+            var tip = "\(session.title.isEmpty ? "(untitled)" : session.title)\n\(session.cwd)"
+            if let info = Transcript.contextInfo(id: session.id, cwd: session.cwd) {
+                tip += "\n\(info.summary)"
+            }
+            button.toolTip = tip
+            button.tag = index
+            button.action = #selector(selectSession(_:))
+        }
+
+        if includeUsage {
+            let button = makeTab(x: tabBar.bounds.width - usageWidth, width: usageWidth,
+                                 title: "Usage", current: showingUsage)
+            button.toolTip = "Plan usage limits — 5-hour and weekly"
+            button.action = #selector(selectUsage)
         }
     }
 
     @objc private func selectSession(_ sender: NSButton) {
         guard sessions.indices.contains(sender.tag) else { return }
+        showingUsage = false
         selected = sessions[sender.tag]
         lastRendered = ""          // force a redraw of the new conversation
+        rebuildTabs()
+        reload()
+    }
+
+    @objc private func selectUsage() {
+        showingUsage = true
+        lastRendered = ""
         rebuildTabs()
         reload()
     }
@@ -345,6 +372,8 @@ final class ChatController: NSObject {
         // transcript yet; rebuilding now would delete it under the user.
         if running && preserveScroll { return }
 
+        if showingUsage { reloadUsage(preserveScroll: preserveScroll); return }
+
         guard let (id, cwd) = activeSession else {
             header.stringValue = "PIT WALL"
             subheader.stringValue = "no session yet"
@@ -358,12 +387,105 @@ final class ChatController: NSObject {
 
         let title = StateChannel.readSessionTitle(id: id, cwd: cwd)
         header.stringValue = title ?? "PIT WALL"
-        subheader.stringValue = "\((cwd as NSString).lastPathComponent) · \(id.prefix(8))…"
+        var sub = "\((cwd as NSString).lastPathComponent) · \(id.prefix(8))…"
+        if let info = Transcript.contextInfo(id: id, cwd: cwd) {
+            sub += " · " + info.summary
+        }
+        subheader.stringValue = sub
 
         let state = trackView?.currentState ?? .idle
         updateLamps(for: state)
 
         setBody(preserveScroll: preserveScroll, render(Transcript.recent(id: id, cwd: cwd, limit: 40)))
+    }
+
+    // MARK: - usage tab
+
+    private func reloadUsage(preserveScroll: Bool = false) {
+        header.stringValue = "PLAN USAGE"
+        subheader.stringValue = "live from Anthropic · refreshes every minute"
+        updateLamps(for: trackView?.currentState ?? .idle)
+        setBody(preserveScroll: preserveScroll, renderUsage())
+
+        UsageService.refresh { [weak self] in
+            guard let self, self.showingUsage else { return }
+            self.setBody(preserveScroll: true, self.renderUsage())
+        }
+    }
+
+    private func renderUsage() -> NSAttributedString {
+        let body = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let dim: [NSAttributedString.Key: Any] = [
+            .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.5)]
+
+        if UsageService.rows.isEmpty {
+            if let error = UsageService.error {
+                return NSAttributedString(string: "Could not load plan usage.\n\n\(error)",
+                                          attributes: dim)
+            }
+            return NSAttributedString(string: "Fetching plan usage…", attributes: dim)
+        }
+
+        let out = NSMutableAttributedString()
+        for row in UsageService.rows {
+            let filled = min(14, max(0, Int((Double(row.percent) / 100 * 14).rounded())))
+            let barColor: NSColor = row.percent >= 90 ? .systemRed
+                : row.percent >= 70 ? .systemOrange
+                : accent
+
+            out.append(NSAttributedString(string: row.label + "\n", attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.88)]))
+            out.append(NSAttributedString(string: String(repeating: "█", count: filled), attributes: [
+                .font: body, .foregroundColor: barColor]))
+            out.append(NSAttributedString(string: String(repeating: "░", count: 14 - filled), attributes: [
+                .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.18)]))
+            out.append(NSAttributedString(string: "  \(row.percent)%", attributes: [
+                .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.88)]))
+            out.append(NSAttributedString(string: row.resets.isEmpty ? "\n\n" : "   \(row.resets)\n\n",
+                                          attributes: dim))
+        }
+        if let error = UsageService.error {
+            out.append(NSAttributedString(string: "last refresh failed: \(error)\n\n", attributes: dim))
+        }
+
+        // Weekly histogram: real counts up to today, estimates beyond.
+        let bars = UsageService.weekHistogram()
+        if !bars.isEmpty {
+            out.append(NSAttributedString(string: "THIS WEEK · prompts\n", attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .bold),
+                .foregroundColor: accent]))
+            let peak = max(bars.map(\.count).max() ?? 1, 1)
+            for bar in bars {
+                let filled = min(12, Int((Double(bar.count) / Double(peak) * 12).rounded()))
+                out.append(NSAttributedString(string: bar.label + "  ", attributes: [
+                    .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.55)]))
+                out.append(NSAttributedString(string: String(repeating: "█", count: filled), attributes: [
+                    .font: body,
+                    .foregroundColor: bar.projected ? accent.withAlphaComponent(0.35) : accent]))
+                out.append(NSAttributedString(string: String(repeating: "░", count: 12 - filled), attributes: [
+                    .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.12)]))
+                let suffix = bar.projected ? "  ~\(bar.count) est"
+                    : "  \(bar.count)" + (bar.isToday ? " · today" : "")
+                out.append(NSAttributedString(string: suffix + "\n", attributes: [
+                    .font: body,
+                    .foregroundColor: NSColor.white.withAlphaComponent(bar.projected ? 0.45 : 0.88)]))
+            }
+            out.append(NSAttributedString(string: "\n", attributes: dim))
+        }
+
+        // Local activity KPIs under the plan bars.
+        out.append(NSAttributedString(string: "ACTIVITY\n", attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .bold),
+            .foregroundColor: accent]))
+        for stat in UsageService.stats() {
+            out.append(NSAttributedString(string: stat.label.padding(toLength: 14, withPad: " ",
+                                                                     startingAt: 0), attributes: [
+                .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.55)]))
+            out.append(NSAttributedString(string: stat.value + "\n", attributes: [
+                .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.88)]))
+        }
+        return out
     }
 
     /// Which marshalling light is showing.
@@ -495,6 +617,11 @@ final class ChatController: NSObject {
     @objc private func send() {
         let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !running else { return }
+
+        if showingUsage {
+            flashSubheader("pick a session tab to reply")
+            return
+        }
 
         guard let (sessionId, cwd) = activeSession else {
             flashSubheader("no session to reply to")

@@ -108,6 +108,20 @@ extension GT3Model {
         ctx.fillRect(NSColor(srgbRed: 0.85, green: 0.08, blue: 0.06, alpha: 1), 4.2, y, 2.6, 1.8)
     }
 
+    /// Broadcast kit for a GT3 car: roof camera pod with its red tally light,
+    /// aerial, and a door mirror. Coordinates differ per body, so each model
+    /// passes its own roofline and mirror position.
+    func drawBroadcastKit(_ ctx: CGContext, roofX: CGFloat, roofY: CGFloat,
+                          mirrorX: CGFloat, mirrorY: CGFloat) {
+        let dark = NSColor(white: 0.08, alpha: 1)
+        ctx.fillRect(dark, roofX, roofY, 2.8, 1.1)
+        ctx.fillRect(NSColor(srgbRed: 0.85, green: 0.08, blue: 0.06, alpha: 1),
+                     roofX + 2.8, roofY + 0.1, 0.8, 0.9)
+        ctx.fillRect(dark, roofX - 3.5, roofY, 0.4, 2.2)
+        ctx.fillRect(livery.shade, mirrorX, mirrorY, 2.2, 1.0)
+        ctx.fillRect(NSColor(white: 0.85, alpha: 1), mirrorX + 0.4, mirrorY + 0.25, 1.3, 0.5)
+    }
+
     /// Number roundel on the door.
     func drawRoundel(_ ctx: CGContext, at x: CGFloat, y: CGFloat = 7.4) {
         ctx.fillRect(livery.trim, x, y, 5, 3.6)

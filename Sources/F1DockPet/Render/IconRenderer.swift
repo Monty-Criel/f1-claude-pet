@@ -27,10 +27,10 @@ enum IconRenderer {
         ctx.addPath(squircle)
         ctx.clip()
 
-        // Racing blue, darker towards the bottom.
+        // Claude orange, darker towards the bottom.
         let colors = [
-            NSColor(srgbRed: 0.09, green: 0.20, blue: 0.52, alpha: 1).cgColor,
-            NSColor(srgbRed: 0.03, green: 0.06, blue: 0.20, alpha: 1).cgColor,
+            NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1).cgColor,
+            NSColor(srgbRed: 0.25, green: 0.10, blue: 0.06, alpha: 1).cgColor,
         ] as CFArray
         if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
                                      colors: colors, locations: [0, 1]) {
@@ -73,7 +73,7 @@ enum IconRenderer {
         }
 
         // The car itself, nearest-neighbour so the pixels stay hard.
-        if let sprite = CarRenderer.image(for: car, wheelAngle: 0.4) {
+        if let sprite = CarRenderer.image(for: car, wheelAngle: 0.4, detail: 4) {
             // Soft shadow so the car lifts off the background.
             ctx.saveGState()
             ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.012),

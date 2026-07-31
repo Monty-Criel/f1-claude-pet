@@ -57,17 +57,25 @@ enum Transcript {
             }
         }
 
-        // Only the top few get their contents read — stat is cheap, tailing is
-        // not — so take a few extra to survive filtering.
+        // Walk the whole list newest-first until enough real chats are found —
+        // claude-mem's observer sessions can flood the top of the recency
+        // order, so a fixed-depth scan comes up short. Stat is cheap and the
+        // tail reads stop as soon as `limit` conversations are in hand.
         var found: [SessionRef] = []
-        for (file, date) in candidates.sorted(by: { $0.1 > $1.1 }).prefix(limit * 3) {
+        var seenLabels = Set<String>()
+        for (file, date) in candidates.sorted(by: { $0.1 > $1.1 }) {
             let (title, cwd) = titleAndCwd(in: file)
 
             // Background machinery, not conversations you would want to reply to.
             if cwd.contains("/.claude-mem/") || cwd.contains("observer-sessions") { continue }
 
-            found.append(SessionRef(id: file.deletingPathExtension().lastPathComponent,
-                                    cwd: cwd, title: title, modified: date))
+            let ref = SessionRef(id: file.deletingPathExtension().lastPathComponent,
+                                 cwd: cwd, title: title, modified: date)
+            // Two untitled sessions in the same repo would make identical
+            // tabs — keep only the newest of each look-alike.
+            guard seenLabels.insert(ref.label).inserted else { continue }
+
+            found.append(ref)
             if found.count == limit { break }
         }
         return found
@@ -193,6 +201,66 @@ enum Transcript {
               !clean.hasPrefix("<local-command"),
               !clean.hasPrefix("Caveat:") else { return }
         entries.append(Entry(role: role, text: clean))
+    }
+
+    // MARK: - context usage
+
+    /// Model and context-window usage for a session, taken from the last
+    /// assistant message that carried API usage numbers.
+    struct ContextInfo {
+        let modelId: String
+        let tokens: Int
+
+        /// "claude-fable-5" → "Fable 5", "claude-haiku-4-5-20251001" → "Haiku 4.5".
+        var modelName: String {
+            var parts = modelId.replacingOccurrences(of: "claude-", with: "")
+                .split(separator: "-").map(String.init)
+            parts.removeAll { $0.count == 8 && Int($0) != nil }   // build dates
+            guard let family = parts.first else { return modelId }
+            let name = family.prefix(1).uppercased() + family.dropFirst()
+            let version = parts.dropFirst().joined(separator: ".")
+            return version.isEmpty ? name : "\(name) \(version)"
+        }
+
+        /// Fable runs a 1M window; everything else defaults to 200k — unless
+        /// the observed usage already exceeds that, which proves a 1M session.
+        var window: Int {
+            if modelId.contains("fable") || modelId.contains("[1m]") { return 1_000_000 }
+            return tokens > 200_000 ? 1_000_000 : 200_000
+        }
+
+        /// e.g. "Fable 5 · 217k/1M (22%)" — compact, the subheader is narrow.
+        var summary: String {
+            let used = tokens >= 1_000_000
+                ? String(format: "%.2fM", Double(tokens) / 1_000_000)
+                : tokens >= 100_000
+                    ? "\(tokens / 1000)k"
+                    : String(format: "%.1fk", Double(tokens) / 1_000)
+            let total = window >= 1_000_000 ? "\(window / 1_000_000)M" : "\(window / 1_000)k"
+            let pct = Int((Double(tokens) / Double(window) * 100).rounded())
+            return "\(modelName) · \(used)/\(total) (\(pct)%)"
+        }
+    }
+
+    static func contextInfo(id: String, cwd: String) -> ContextInfo? {
+        for line in tailLines(id: id, cwd: cwd).reversed() {
+            guard line.count < maxLineLength,
+                  line.contains("\"usage\""), line.contains("\"assistant\""),
+                  let data = line.data(using: .utf8),
+                  let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  record["type"] as? String == "assistant",
+                  let message = record["message"] as? [String: Any],
+                  let usage = message["usage"] as? [String: Any]
+            else { continue }
+
+            let tokens = ["input_tokens", "cache_creation_input_tokens",
+                          "cache_read_input_tokens", "output_tokens"]
+                .compactMap { usage[$0] as? Int }
+                .reduce(0, +)
+            guard tokens > 0 else { continue }
+            return ContextInfo(modelId: message["model"] as? String ?? "?", tokens: tokens)
+        }
+        return nil
     }
 
     /// The most recent thing Claude actually said — used as the bubble text

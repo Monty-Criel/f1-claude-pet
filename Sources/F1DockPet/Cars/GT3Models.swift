@@ -74,6 +74,7 @@ struct Porsche911GT3R: GT3Model {
         drawRoundel(ctx, at: 34)
         drawTailLight(ctx, at: 8.6)
         drawSplitterAndSkirt(ctx, splitterFrom: 63)
+        drawBroadcastKit(ctx, roofX: 32, roofY: 18.5, mirrorX: 47.5, mirrorY: 12.4)
     }
 }
 
@@ -136,6 +137,7 @@ struct McLaren720SGT3: GT3Model {
         drawRoundel(ctx, at: 36)
         drawTailLight(ctx, at: 8)
         drawSplitterAndSkirt(ctx, splitterFrom: 62)
+        drawBroadcastKit(ctx, roofX: 38, roofY: 17.9, mirrorX: 50, mirrorY: 11.6)
     }
 }
 
@@ -194,6 +196,7 @@ struct BMWM4GT3: GT3Model {
         drawRoundel(ctx, at: 34)
         drawTailLight(ctx, at: 9)
         drawSplitterAndSkirt(ctx, splitterFrom: 62)
+        drawBroadcastKit(ctx, roofX: 34, roofY: 18.7, mirrorX: 47.5, mirrorY: 12.6)
     }
 }
 
@@ -257,6 +260,7 @@ struct MercedesAMGGT3: GT3Model {
         drawRoundel(ctx, at: 30)
         drawTailLight(ctx, at: 8.4)
         drawSplitterAndSkirt(ctx, splitterFrom: 62)
+        drawBroadcastKit(ctx, roofX: 29, roofY: 18.1, mirrorX: 43, mirrorY: 12.4)
     }
 }
 
@@ -312,6 +316,7 @@ struct AstonVantageGT3: GT3Model {
         drawRoundel(ctx, at: 32)
         drawTailLight(ctx, at: 9)
         drawSplitterAndSkirt(ctx, splitterFrom: 62)
+        drawBroadcastKit(ctx, roofX: 32, roofY: 18.3, mirrorX: 45.5, mirrorY: 12.3)
     }
 }
 

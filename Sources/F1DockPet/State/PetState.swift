@@ -20,6 +20,12 @@ enum PetState: String, CaseIterable {
 
     var isBurningOut: Bool { self == .launch || self == .victory }
 
+    /// Menu label. `spin` predates the breakdown animation — the state is a
+    /// crash now, but the raw value stays for CLI and hook compatibility.
+    var displayName: String {
+        self == .spin ? "Crash" : rawValue.capitalized
+    }
+
     /// One line describing what the car does — shown under each menu item and
     /// used by `--notify --help`.
     var summary: String {

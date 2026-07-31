@@ -16,8 +16,10 @@ final class TrackView: NSView {
         didSet { needsDisplay = true }
     }
 
-    /// How many screen points per sprite pixel. 2 keeps the pixel look crisp.
-    private let scale: CGFloat = 2
+    /// Screen points per art unit. 2.25 with matching raster detail gives a
+    /// slightly bigger car drawn from 1pt pixels — round wheels, legible
+    /// lettering — instead of chunky 2pt blocks.
+    private let scale: CGFloat = 2.25
 
     /// Fraction of the Dock width the car normally uses, from the right end.
     private let laneFraction: CGFloat = 1.0 / 3.0
@@ -77,6 +79,22 @@ final class TrackView: NSView {
     /// Seconds left of the hard launch off the line — faster and harder
     /// accelerating than an ordinary tool-fired boost.
     private var launchBurst: CGFloat = 0
+
+    /// While Claude works the car alternates between a hot lap and a cool-down
+    /// lap, rather than droning round at one speed. A push lap is quick and
+    /// throws sparks over the kerbs; a cool-down is a slow roll.
+    private enum Stint { case hotLap, coolDown }
+    private var stint: Stint = .coolDown
+    private var stintRemaining: CGFloat = 0
+    /// Bottoming-out sparks, struck at random while pushing.
+    private var kerbSparks: CGFloat = 0
+    /// Cheap deterministic-ish jitter for picking stint lengths.
+    private var rng: UInt64 = 0x2545F4914F6CDD1D
+
+    private func random() -> CGFloat {
+        rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17
+        return CGFloat(rng % 10_000) / 10_000
+    }
     /// Rotation about the car's *vertical* axis, for the celebratory donut.
     /// In side view this foreshortens the car to edge-on and back, rather than
     /// cartwheeling it end over end.
@@ -357,7 +375,9 @@ final class TrackView: NSView {
         // Any new event repairs the car.
         if new != .spin { puncture = 0; engineFire = 0 }
         if new != .launch { launchSparks = 0 }
-        if new != .racing { launchBurst = 0 }
+        if new != .racing { launchBurst = 0; kerbSparks = 0 }
+        // Every stretch of work opens with a push lap.
+        if new == .racing { stint = .hotLap; stintRemaining = 3 + random() * 4 }
 
         switch new {
         case .idle:
@@ -432,6 +452,7 @@ final class TrackView: NSView {
         boostRemaining = max(0, boostRemaining - dtf)
         bigSmokeRemaining = max(0, bigSmokeRemaining - dtf)
         launchBurst = max(0, launchBurst - dtf)
+        kerbSparks = max(0, kerbSparks - dtf * 3)
 
         drive(dt: dtf)
 
@@ -474,10 +495,12 @@ final class TrackView: NSView {
                        backwards: -direction,
                        dt: dtf)
         }
-        // Sparks showering off the plank on the startline.
-        if launchSparks > 0.01 {
+        // Sparks showering off the plank on the startline, and struck off
+        // the floor when the car bottoms out on a push lap.
+        let sparkIntensity = max(launchSparks, kerbSparks)
+        if sparkIntensity > 0.01 {
             smoke.emitSparks(at: rearContactPoint,
-                             intensity: launchSparks,
+                             intensity: sparkIntensity,
                              backwards: -direction,
                              dt: dtf)
         }
@@ -590,10 +613,32 @@ final class TrackView: NSView {
                 return
             }
 
+            // Hot lap / cool-down cycle, so the pace varies while Claude
+            // works instead of holding one speed forever.
+            stintRemaining -= dt
+            if stintRemaining <= 0 {
+                if stint == .hotLap {
+                    stint = .coolDown
+                    stintRemaining = 2.5 + random() * 3.5
+                } else {
+                    stint = .hotLap
+                    stintRemaining = 3 + random() * 4
+                    // Every push lap starts with a shove.
+                    boostRemaining = max(boostRemaining, 0.7)
+                }
+            }
+
             // A launch burst raises the ceiling well beyond a normal boost
             // and lets the car accelerate hard out of the box.
+            let stintFactor: CGFloat = stint == .hotLap ? 1.45 : 0.6
             let boostFactor: CGFloat = launchBurst > 0 ? 2.6 : (boostRemaining > 0 ? 1.6 : 1)
-            let ceiling = topSpeed * boostFactor
+            let ceiling = topSpeed * boostFactor * (launchBurst > 0 ? 1 : stintFactor)
+
+            // Sparks off the plank when pushing hard — struck at random, the
+            // way a real car only bottoms out over bumps and kerbs.
+            if stint == .hotLap, velocity > topSpeed, random() < 3.5 * dt {
+                kerbSparks = 0.5 + random() * 0.5
+            }
             // Gentler than a real car would manage: sharp acceleration and
             // late braking are exactly what catches the eye.
             let accel: CGFloat = launchBurst > 0 ? 1400 : (livelyMode ? 380 : 210)
@@ -623,7 +668,7 @@ final class TrackView: NSView {
                 velocity = 0
                 // A long pause makes the whole thing read as occasional
                 // movement rather than continuous pacing.
-                dwellRemaining = livelyMode ? 0.45 : 1.6
+                dwellRemaining = stint == .hotLap ? 0.15 : (livelyMode ? 0.45 : 1.6)
                 arrivedAtLeftEnd = direction < 0
             }
 
@@ -770,7 +815,8 @@ final class TrackView: NSView {
                                              wheelAngle: wheelAngle,
                                              facingRight: direction > 0,
                                              wheelSpin: tyreSpin,
-                                             deflation: puncture)
+                                             deflation: puncture,
+                                             detail: scale)
         else { return }
 
         let rect = CGRect(x: drawX.rounded(), y: idleShake.rounded(),
@@ -913,15 +959,20 @@ final class TrackView: NSView {
         ctx.setShouldAntialias(true)
 
         let box = CGRect(x: boxX, y: boxY, width: boxW, height: boxH)
-        ctx.setFillColor(NSColor.black.withAlphaComponent(0.72 * alpha).cgColor)
-        ctx.addPath(CGPath(roundedRect: box, cornerWidth: 6, cornerHeight: 6, transform: nil))
+        let boxPath = CGPath(roundedRect: box, cornerWidth: 6, cornerHeight: 6, transform: nil)
+        ctx.setFillColor(Theme.bubbleBackground.withAlphaComponent(0.88 * alpha).cgColor)
+        ctx.addPath(boxPath)
         ctx.fillPath()
+        ctx.setStrokeColor(Theme.accent.withAlphaComponent(0.55 * alpha).cgColor)
+        ctx.setLineWidth(1)
+        ctx.addPath(boxPath)
+        ctx.strokePath()
 
         // Tail pointing down at the car.
         let tail = CGMutablePath()
         let tipX = min(max(drawX + carSize.width / 2, box.minX + 10), box.maxX - 10)
         tail.polygon([pt(tipX - 5, boxY + 1), pt(tipX + 5, boxY + 1), pt(tipX, boxY - 6)])
-        ctx.setFillColor(NSColor.black.withAlphaComponent(0.72 * alpha).cgColor)
+        ctx.setFillColor(Theme.bubbleBackground.withAlphaComponent(0.88 * alpha).cgColor)
         ctx.addPath(tail)
         ctx.fillPath()
 
