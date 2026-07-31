@@ -95,7 +95,8 @@ echo 'alias pet="~/Documents/GitHub/f1-dock-pet/scripts/pet"' >> ~/.zshrc
 
 - **Click the car** → the pit wall opens: live conversation, a reply box, your two
   most recent sessions as tabs, and a **Usage** tab.
-- **Right-click the car** → pit board: sends it to the pits, or back out.
+- **Right-click the car** → moves it to the other end of the Dock (same as
+  the Pit box menu). The second car swaps with it.
 - **Usage tab** → plan limits (5-hour, weekly) as bars, a Mon–Sun prompt
   histogram with estimates for days still to come, and activity stats.
 - **Pin button** → the panel rides above the car, or unpin to drag it anywhere.

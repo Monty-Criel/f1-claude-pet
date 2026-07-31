@@ -315,10 +315,14 @@ final class TrackView: NSView {
     override func rightMouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         guard carHitBox.contains(point) else { return }
-        // Right-click is the pit board: call the car in — BOX BOX — and a
-        // second right-click releases it back to work.
-        apply(state == .waiting ? .idle : .waiting)
+        // Right-click sends the car to the other end of the Dock — the same
+        // thing the Pit box menu does, without going to the menu bar.
+        onPitHomeToggled?()
     }
+
+    /// Asks the app delegate to flip which end this car calls home, so the
+    /// choice is persisted and the second car moves out of the way.
+    var onPitHomeToggled: (() -> Void)?
 
     /// Contact patch of a tyre, in view coordinates, accounting for facing.
     private func contactPoint(driven: Bool) -> CGPoint {

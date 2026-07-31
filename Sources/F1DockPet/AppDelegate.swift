@@ -70,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar?.onPitHomeChanged = { [weak self] home in
             self?.secondView?.pitHome = (home == .left) ? .right : .left
         }
+        // Right-clicking the car does the same thing as the menu item.
+        trackView.onPitHomeToggled = { [weak self] in self?.togglePitHome() }
 
         if let saved = UserDefaults.standard.string(forKey: "secondCarSession"),
            let ref = Transcript.recentSessions(limit: 10).first(where: { $0.id == saved }) {
@@ -116,6 +118,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Create, replace or remove the second car.
+    /// Move the car to the other end of the Dock, taking the second car and
+    /// the menu's checkmarks with it.
+    private func togglePitHome() {
+        let home: TrackView.PitHome = trackView.pitHome == .left ? .right : .left
+        trackView.pitHome = home
+        TrackView.preferredPitHome = home
+        secondView?.pitHome = (home == .left) ? .right : .left
+        menuBar?.rebuild()
+    }
+
     func setSecondCar(_ session: Transcript.SessionRef?) {
         secondChat?.close(); secondChat = nil
         secondView?.stop(); secondView = nil
@@ -131,6 +143,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Always the opposite end from the primary, so they never fight over
         // the same box.
         v.pitHome = trackView.pitHome == .left ? .right : .left
+        // Right-clicking either car swaps both ends, so they never end up
+        // sharing a box.
+        v.onPitHomeToggled = { [weak self] in self?.togglePitHome() }
         // A different livery from the primary, so the two are tellable apart.
         if let alt = CarRegistry.all.first(where: { $0.id != trackView.car.id }) { v.car = alt }
         w.contentView = v
