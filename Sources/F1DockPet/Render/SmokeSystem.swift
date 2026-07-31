@@ -222,11 +222,16 @@ struct SmokeSystem {
             case .spark:
                 // Bright, hot, and drawn as a short streak along its own
                 // direction of travel so it reads as a flying ember.
+                //
+                // Mostly orange, with yellow reserved for the hottest few:
+                // squaring the heat pushes the bulk of the distribution down
+                // the orange end, and a spark cools as it flies, so the tail
+                // of the shower is deeper than its source.
                 let alpha = max(0, p.life)
-                let heat = p.shade
+                let heat = p.shade * (0.55 + p.life * 0.45)
                 ctx.setFillColor(NSColor(srgbRed: 1,
-                                         green: 0.55 + heat * 0.35,
-                                         blue: 0.10 + heat * 0.25,
+                                         green: 0.34 + heat * heat * 0.54,
+                                         blue: 0.02 + heat * heat * heat * 0.28,
                                          alpha: alpha).cgColor)
                 let len = max(1.5, min(6, abs(p.velocity.dx) * 0.02))
                 let dir: CGFloat = p.velocity.dx < 0 ? -1 : 1
