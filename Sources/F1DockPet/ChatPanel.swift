@@ -59,17 +59,43 @@ final class ChatController: NSObject {
         set { UserDefaults.standard.set(newValue, forKey: "chatPinned") }
     }
 
-    private static let width: CGFloat = 460
-    /// Tall enough that the Usage tab fits its bars, histogram and stats
-    /// without scrolling.
-    private static let height: CGFloat = 560
+    /// How big the panel is, picked in the menu bar. Medium is the size the
+    /// layout was designed around; small suits a crowded screen, large gives
+    /// the Usage tab and long answers room.
+    enum Size: String, CaseIterable {
+        case small, medium, large
+
+        var displayName: String { rawValue.capitalized }
+
+        var width: CGFloat {
+            switch self {
+            case .small: return 380
+            case .medium: return 460
+            case .large: return 620
+            }
+        }
+        var height: CGFloat {
+            switch self {
+            case .small: return 420
+            case .medium: return 560
+            case .large: return 760
+            }
+        }
+
+        static var selected: Size {
+            get { Size(rawValue: UserDefaults.standard.string(forKey: "chatSize") ?? "") ?? .medium }
+            set { UserDefaults.standard.set(newValue.rawValue, forKey: "chatSize") }
+        }
+    }
+
+    private var size: Size = .selected
 
     // Claude orange, everywhere the panel needs an accent.
     private var accent: NSColor { Theme.accent }
 
     init(trackView: TrackView) {
         self.trackView = trackView
-        panel = ChatPanel(contentRect: CGRect(x: 0, y: 0, width: Self.width, height: Self.height),
+        panel = ChatPanel(contentRect: CGRect(x: 0, y: 0, width: size.width, height: size.height),
                           styleMask: [.borderless, .nonactivatingPanel],
                           backing: .buffered, defer: false)
         super.init()
@@ -78,6 +104,30 @@ final class ChatController: NSObject {
             forName: Theme.changed, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.applyTheme() }
             }
+    }
+
+    /// Resize the panel and lay it out again.
+    ///
+    /// Every subview is positioned against the panel's dimensions, so the
+    /// cheapest correct answer is to build the chrome afresh rather than nudge
+    /// twenty frames.
+    func setSize(_ new: Size) {
+        guard new != size else { return }
+        size = new
+        Size.selected = new
+
+        lamps.removeAll()
+        panel.contentView?.subviews.forEach { $0.removeFromSuperview() }
+        panel.setContentSize(NSSize(width: new.width, height: new.height))
+        buildUI()
+
+        rebuildTabs()
+        applyLayout()
+        applyPinState()
+        stripe?.layer?.backgroundColor = accent.cgColor
+        lastRendered = ""
+        reload()
+        if isPinned { followCar(force: true) }
     }
 
     /// Repaint everything that carries the accent, after a theme change.
@@ -104,7 +154,7 @@ final class ChatController: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.appearance = NSAppearance(named: .darkAqua)
 
-        let content = NSView(frame: CGRect(x: 0, y: 0, width: Self.width, height: Self.height))
+        let content = NSView(frame: CGRect(x: 0, y: 0, width: size.width, height: size.height))
         content.wantsLayer = true
         content.layer?.backgroundColor = Theme.panelBackground.cgColor
         content.layer?.cornerRadius = 14
@@ -114,19 +164,19 @@ final class ChatController: NSObject {
         let inset: CGFloat = 12
 
         // Header band — carries the team colour so the panel matches the car.
-        let band = NSView(frame: CGRect(x: 0, y: Self.height - 44, width: Self.width, height: 44))
+        let band = NSView(frame: CGRect(x: 0, y: size.height - 44, width: size.width, height: 44))
         band.wantsLayer = true
         band.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.05).cgColor
         content.addSubview(band)
 
-        let stripe = NSView(frame: CGRect(x: 0, y: Self.height - 46, width: Self.width, height: 2))
+        let stripe = NSView(frame: CGRect(x: 0, y: size.height - 46, width: size.width, height: 2))
         stripe.wantsLayer = true
         content.addSubview(stripe)
         self.stripe = stripe
 
         // Marshalling lights: green / yellow / red, read left to right like a
         // trackside panel. Exactly one is lit at a time; the others sit dark.
-        statusDot.frame = CGRect(x: inset, y: Self.height - 26, width: 34, height: 12)
+        statusDot.frame = CGRect(x: inset, y: size.height - 26, width: 34, height: 12)
         statusDot.wantsLayer = true
         statusDot.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
         statusDot.layer?.cornerRadius = 3
@@ -139,14 +189,14 @@ final class ChatController: NSObject {
         }
         content.addSubview(statusDot)
 
-        header.frame = CGRect(x: inset + 42, y: Self.height - 25, width: Self.width - inset * 2 - 100, height: 15)
+        header.frame = CGRect(x: inset + 42, y: size.height - 25, width: size.width - inset * 2 - 100, height: 15)
         header.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
         header.textColor = .white
         header.lineBreakMode = .byTruncatingTail
         content.addSubview(header)
 
         // Pin / unpin and close, top right of the header band.
-        closeButton.frame = CGRect(x: Self.width - inset - 20, y: Self.height - 30, width: 20, height: 20)
+        closeButton.frame = CGRect(x: size.width - inset - 20, y: size.height - 30, width: 20, height: 20)
         closeButton.isBordered = false
         closeButton.bezelStyle = .accessoryBarAction
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")
@@ -155,7 +205,7 @@ final class ChatController: NSObject {
         closeButton.action = #selector(closeClicked)
         content.addSubview(closeButton)
 
-        pinButton.frame = CGRect(x: Self.width - inset - 46, y: Self.height - 30, width: 20, height: 20)
+        pinButton.frame = CGRect(x: size.width - inset - 46, y: size.height - 30, width: 20, height: 20)
         pinButton.isBordered = false
         pinButton.bezelStyle = .accessoryBarAction
         pinButton.target = self
@@ -168,25 +218,25 @@ final class ChatController: NSObject {
         spinner.frame = CGRect(x: inset, y: 46, width: 26, height: 22)
         content.addSubview(spinner)
 
-        workLabel.frame = CGRect(x: inset + 30, y: 48, width: Self.width - inset * 2 - 30, height: 16)
+        workLabel.frame = CGRect(x: inset + 30, y: 48, width: size.width - inset * 2 - 30, height: 16)
         workLabel.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
         workLabel.lineBreakMode = .byTruncatingTail
         workLabel.isHidden = true
         content.addSubview(workLabel)
 
-        subheader.frame = CGRect(x: inset + 42, y: Self.height - 40, width: Self.width - inset * 2 - 100, height: 13)
+        subheader.frame = CGRect(x: inset + 42, y: size.height - 40, width: size.width - inset * 2 - 100, height: 13)
         subheader.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
         subheader.textColor = NSColor.white.withAlphaComponent(0.45)
         subheader.lineBreakMode = .byTruncatingTail
         content.addSubview(subheader)
 
         // Session switcher: the three most recently active conversations.
-        tabBar.frame = CGRect(x: inset, y: Self.height - 72, width: Self.width - inset * 2, height: 22)
+        tabBar.frame = CGRect(x: inset, y: size.height - 72, width: size.width - inset * 2, height: 22)
         content.addSubview(tabBar)
 
         // Conversation.
-        scroll.frame = CGRect(x: inset, y: 48, width: Self.width - inset * 2,
-                              height: Self.height - 48 - 78)
+        scroll.frame = CGRect(x: inset, y: 48, width: size.width - inset * 2,
+                              height: size.height - 48 - 78)
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
@@ -214,7 +264,7 @@ final class ChatController: NSObject {
         content.addSubview(scroll)
 
         // Input.
-        input.frame = CGRect(x: inset, y: 12, width: Self.width - inset * 2, height: 28)
+        input.frame = CGRect(x: inset, y: 12, width: size.width - inset * 2, height: 28)
         input.placeholderString = "Message Claude…  ⏎ send   esc close"
         input.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         input.bezelStyle = .roundedBezel
@@ -355,8 +405,8 @@ final class ChatController: NSObject {
     private func applyLayout() {
         input.isHidden = showingUsage
         let bottom: CGFloat = showingUsage ? 14 : 48
-        scroll.frame = CGRect(x: 12, y: bottom, width: Self.width - 24,
-                              height: Self.height - bottom - 78)
+        scroll.frame = CGRect(x: 12, y: bottom, width: size.width - 24,
+                              height: size.height - bottom - 78)
         transcript.frame = CGRect(origin: .zero, size: scroll.contentSize)
         transcript.textContainer?.containerSize = NSSize(width: scroll.contentSize.width,
                                                          height: CGFloat.greatestFiniteMagnitude)
@@ -401,10 +451,10 @@ final class ChatController: NSObject {
         // Clear the radio bubble as well as the car: when a bubble is up it is
         // taller than the car, and anchoring to the car alone buries it.
         let parksLeft = car.midX < bounds.midX
-        var x = parksLeft ? car.minX - 18 : car.maxX - Self.width + 18
+        var x = parksLeft ? car.minX - 18 : car.maxX - size.width + 18
         var y = (trackView?.contentTopScreenY ?? car.maxY) + 12
-        x = max(bounds.minX + 8, min(x, bounds.maxX - Self.width - 8))
-        y = min(y, bounds.maxY - Self.height - 8)
+        x = max(bounds.minX + 8, min(x, bounds.maxX - size.width - 8))
+        y = min(y, bounds.maxY - size.height - 8)
 
         let origin = CGPoint(x: x.rounded(), y: y.rounded())
         if force || panel.frame.origin != origin {
@@ -451,7 +501,41 @@ final class ChatController: NSObject {
         updateLamps(for: state)
         updateWorkingRow(id: id, cwd: cwd, state: state)
 
-        setBody(preserveScroll: preserveScroll, render(Transcript.recent(id: id, cwd: cwd, limit: 40)))
+        let body = NSMutableAttributedString(
+            attributedString: render(Transcript.recent(id: id, cwd: cwd, limit: 40)))
+        body.append(renderAgents(Transcript.agentRuns(id: id, cwd: cwd)))
+        setBody(preserveScroll: preserveScroll, body)
+    }
+
+    /// Subagents and background shells, pinned under the conversation — the
+    /// work that outlives the message that started it.
+    private func renderAgents(_ runs: [Transcript.AgentRun]) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        guard !runs.isEmpty else { return out }
+
+        let small = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        let running = runs.filter(\.isRunning).count
+        let done = runs.count - running
+
+        var heading = running > 0 ? "\(running) running" : "all finished"
+        if done > 0 { heading += " · \(done) completed" }
+        out.append(NSAttributedString(string: "\nAGENTS & BACKGROUND WORK — \(heading)\n", attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .bold),
+            .foregroundColor: accent]))
+
+        for run in runs {
+            out.append(NSAttributedString(string: "  \(run.symbol) ", attributes: [
+                .font: small,
+                .foregroundColor: run.isRunning ? accent : NSColor.white.withAlphaComponent(0.3)]))
+            out.append(NSAttributedString(string: run.label, attributes: [
+                .font: small,
+                .foregroundColor: NSColor.white.withAlphaComponent(run.isRunning ? 0.88 : 0.42)]))
+            out.append(NSAttributedString(string: run.isRunning ? "  · running\n" : "  · done\n",
+                                          attributes: [
+                .font: small,
+                .foregroundColor: NSColor.white.withAlphaComponent(run.isRunning ? 0.6 : 0.3)]))
+        }
+        return out
     }
 
     /// The spinner row: wheel, verb, elapsed, tokens — shown only while the
@@ -470,13 +554,13 @@ final class ChatController: NSObject {
         guard working else {
             // Give the conversation its space back.
             scroll.frame.origin.y = showingUsage ? 14 : 48
-            scroll.frame.size.height = Self.height - scroll.frame.origin.y - 78
+            scroll.frame.size.height = size.height - scroll.frame.origin.y - 78
             return
         }
 
         // Sit the conversation above the spinner row.
         scroll.frame.origin.y = 72
-        scroll.frame.size.height = Self.height - 72 - 78
+        scroll.frame.size.height = size.height - 72 - 78
 
         let stats = Transcript.turnStats(id: id, cwd: cwd)
         var text = stats.verb

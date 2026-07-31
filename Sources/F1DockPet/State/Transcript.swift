@@ -280,6 +280,103 @@ enum Transcript {
         }
     }
 
+    // MARK: - agents and background work
+
+    /// A subagent or background shell the session has started.
+    ///
+    /// Claude Code records these as ordinary tool calls, and their completion
+    /// as the matching `tool_result` — so "still running" is simply a call
+    /// whose result has not been written yet.
+    struct AgentRun {
+        enum Kind { case agent, background }
+        let kind: Kind
+        let label: String
+        let isRunning: Bool
+
+        var symbol: String { kind == .agent ? "\u{25B8}\u{25B8}" : "\u{2338}" }
+    }
+
+    /// Subagents and background shells from the recent transcript, oldest
+    /// first. Running ones last, since those are what you are waiting on.
+    static func agentRuns(id: String, cwd: String, limit: Int = 8) -> [AgentRun] {
+        var pending: [(id: String, kind: AgentRun.Kind, label: String)] = []
+        var finished = Set<String>()
+
+        for line in tailLines(id: id, cwd: cwd) {
+            // A background shell gets its tool_result the instant it starts —
+            // that is only the acknowledgement. Its real completion arrives
+            // later as a task notification quoting the original call's id.
+            if line.contains("task-notification") {
+                for id in matches(of: "<tool-use-id>", in: line, terminator: "<") {
+                    finished.insert(id)
+                }
+            }
+
+            guard line.count < maxLineLength,
+                  line.contains("tool_use") || line.contains("tool_result"),
+                  let data = line.data(using: .utf8),
+                  let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let message = record["message"] as? [String: Any],
+                  let blocks = message["content"] as? [[String: Any]]
+            else { continue }
+
+            for block in blocks {
+                switch block["type"] as? String {
+                case "tool_use":
+                    guard let useId = block["id"] as? String,
+                          let name = block["name"] as? String else { continue }
+                    let input = block["input"] as? [String: Any] ?? [:]
+
+                    if name == "Task" || name == "Agent" {
+                        let label = (input["description"] as? String)
+                            ?? (input["subagent_type"] as? String)
+                            ?? "subagent"
+                        pending.append((useId, .agent, label))
+                    } else if name == "Bash", input["run_in_background"] as? Bool == true {
+                        let label = (input["description"] as? String)
+                            ?? (input["command"] as? String)
+                            ?? "background shell"
+                        pending.append((useId, .background, String(label.prefix(46))))
+                    }
+
+                case "tool_result":
+                    // Only settles a subagent; background shells wait for
+                    // their notification, handled above.
+                    if let useId = block["tool_use_id"] as? String,
+                       pending.last(where: { $0.id == useId })?.kind != .background {
+                        finished.insert(useId)
+                    }
+
+                default:
+                    continue
+                }
+            }
+        }
+
+        let runs = pending.map {
+            AgentRun(kind: $0.kind, label: $0.label, isRunning: !finished.contains($0.id))
+        }
+        // Anything still going is the point; completed work is context.
+        let running = runs.filter(\.isRunning)
+        let done = runs.filter { !$0.isRunning }
+        return Array((done.suffix(max(0, limit - running.count)) + running).suffix(limit))
+    }
+
+    /// Every value following `needle` up to `terminator`, for the handful of
+    /// places the transcript carries XML-ish blocks rather than JSON.
+    private static func matches(of needle: String, in line: String,
+                                terminator: Character) -> [String] {
+        var found: [String] = []
+        var rest = Substring(line)
+        while let range = rest.range(of: needle) {
+            let tail = rest[range.upperBound...]
+            guard let end = tail.firstIndex(of: terminator) else { break }
+            found.append(String(tail[..<end]))
+            rest = tail[end...]
+        }
+        return found
+    }
+
     /// Whether a session looks like it is mid-turn right now.
     ///
     /// The hooks only report the session Claude Code is currently driving, so

@@ -72,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Right-clicking the car does the same thing as the menu item.
         trackView.onPitHomeToggled = { [weak self] in self?.togglePitHome() }
+        menuBar?.onChatSizeChanged = { [weak self] size in
+            self?.chat?.setSize(size)
+            self?.secondChat?.setSize(size)
+        }
 
         if let saved = UserDefaults.standard.string(forKey: "secondCarSession"),
            let ref = Transcript.recentSessions(limit: 10).first(where: { $0.id == saved }) {
