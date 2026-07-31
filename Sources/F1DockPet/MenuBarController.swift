@@ -19,6 +19,9 @@ final class MenuBarController {
     /// Second car management, wired by the app delegate: nil turns it off.
     var onSecondCar: ((Transcript.SessionRef?) -> Void)?
     var currentSecondaryId: (() -> String?)?
+
+    /// Lets the app delegate move the second car to the opposite end.
+    var onPitHomeChanged: ((TrackView.PitHome) -> Void)?
     private var secondCandidates: [Transcript.SessionRef] = []
 
     init(trackView: TrackView, onQuit: @escaping () -> Void) {
@@ -118,6 +121,20 @@ final class MenuBarController {
         tyresItem.subtitle = "F1 cars only"
         menu.addItem(tyresItem)
 
+        // Which end of the Dock the car calls home.
+        let pitItem = NSMenuItem(title: "Pit box", action: nil, keyEquivalent: "")
+        let pits = NSMenu()
+        for (home, label) in [(TrackView.PitHome.left, "Left end"),
+                              (TrackView.PitHome.right, "Right end")] {
+            let entry = item(label, #selector(selectPitHome(_:)))
+            entry.representedObject = home.rawValue
+            entry.state = trackView?.pitHome == home ? .on : .off
+            pits.addItem(entry)
+        }
+        pitItem.submenu = pits
+        pitItem.subtitle = "Where it parks and idles"
+        menu.addItem(pitItem)
+
         // Accent colour for the panel, bubble and spinner.
         let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
         let themes = NSMenu()
@@ -190,6 +207,15 @@ final class MenuBarController {
         guard let raw = sender.representedObject as? String,
               let compound = TyreCompound(rawValue: raw) else { return }
         TyreCompound.selected = compound
+        rebuild()
+    }
+
+    @objc private func selectPitHome(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let home = TrackView.PitHome(rawValue: raw) else { return }
+        trackView?.pitHome = home
+        TrackView.preferredPitHome = home
+        onPitHomeChanged?(home)
         rebuild()
     }
 

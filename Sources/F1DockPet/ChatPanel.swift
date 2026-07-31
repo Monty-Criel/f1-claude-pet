@@ -393,13 +393,15 @@ final class ChatController: NSObject {
         let screen = trackView?.window?.screen ?? NSScreen.main
         let bounds = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
 
-        // Right-align to the car rather than centring: the panel then reads as
-        // hanging off the car, and its edge lines up with the rear wing when
-        // the car is facing left — which is how it parks.
+        // Align the panel's near edge with the car rather than centring, so it
+        // reads as hanging off the car. Which edge depends on where the car
+        // lives: a left-parked car takes a left-aligned panel, otherwise the
+        // panel would hang off the screen and get clamped back anyway.
         //
         // Clear the radio bubble as well as the car: when a bubble is up it is
         // taller than the car, and anchoring to the car alone buries it.
-        var x = car.maxX - Self.width + 18
+        let parksLeft = car.midX < bounds.midX
+        var x = parksLeft ? car.minX - 18 : car.maxX - Self.width + 18
         var y = (trackView?.contentTopScreenY ?? car.maxY) + 12
         x = max(bounds.minX + 8, min(x, bounds.maxX - Self.width - 8))
         y = min(y, bounds.maxY - Self.height - 8)

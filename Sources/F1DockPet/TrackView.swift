@@ -3,7 +3,7 @@ import AppKit
 /// The strip of screen the car drives along, sat on top of the Dock.
 ///
 /// The car normally keeps to the right-hand third so it stays out of the way,
-/// with the far right end acting as its pit box. A new prompt or a tool firing
+/// with its home end acting as the pit box. A new prompt or a tool firing
 /// sends it out on one full lap of the whole Dock before it settles back.
 @MainActor
 final class TrackView: NSView {
@@ -143,8 +143,12 @@ final class TrackView: NSView {
         case .right:
             // The window *is* the Dock strip, so the whole of it is fair game.
             if lapMode == .full { return (bounds.minX, bounds.maxX) }
+            // Short laps stay at the car's home end, so it never wanders far
+            // from its pit box.
             let width = bounds.width * laneFraction
-            return (bounds.maxX - width, bounds.maxX)
+            return pitHome == .left
+                ? (bounds.minX, bounds.minX + width)
+                : (bounds.maxX - width, bounds.maxX)
 
         case .centre:
             // The window is the whole screen and we cannot see where the Dock
@@ -157,7 +161,7 @@ final class TrackView: NSView {
         }
     }
 
-    /// Where the car parks when it is called in: the right-hand end of
+    /// Where the car parks when it is called in: the home end of
     /// whichever lane it is using.
     private var pitBoxX: CGFloat {
         let width = bounds.width * laneFraction
@@ -170,10 +174,24 @@ final class TrackView: NSView {
     }
 
     /// Which end of the Dock this car calls home. The primary lives on the
-    /// right; the second car pits at the left end, so the two never fight over
+    /// left; the second car pits at the right end, so the two never fight over
     /// the same box even though both may use the full Dock when moving.
-    enum PitHome { case right, left }
-    var pitHome: PitHome = .right
+    enum PitHome: String { case right, left }
+
+    /// Persisted for the primary car, so the choice survives a restart. The
+    /// second car sets this directly and is always the opposite end.
+    var pitHome: PitHome = .left {
+        didSet { needsDisplay = true }
+    }
+
+    /// The primary car's home end, as picked in the menu bar.
+    static var preferredPitHome: PitHome {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: "pitHome") else { return .left }
+            return PitHome(rawValue: raw) ?? .left
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "pitHome") }
+    }
 
 
 
@@ -743,7 +761,7 @@ final class TrackView: NSView {
                 // Weight rocking over the outside tyres, twice per revolution.
                 idleShake = sin(yawAngle * 2) * 0.7
             } else {
-                // Donut done: roll back to the pit box at the far right and
+                // Donut done: roll back to the pit box at its home end and
                 // stop there, so the car is parked where the chat panel opens
                 // rather than stranded mid-Dock.
                 yawAngle = 0

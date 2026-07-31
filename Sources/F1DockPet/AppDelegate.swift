@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window = OverlayWindow(contentRect: frame)
         trackView = TrackView(frame: CGRect(origin: .zero, size: frame.size))
         trackView.autoresizingMask = [.width, .height]
+        trackView.pitHome = TrackView.preferredPitHome
         window.contentView = trackView
         window.orderFrontRegardless()
 
@@ -66,6 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menuBar?.onSecondCar = { [weak self] in self?.setSecondCar($0) }
         menuBar?.currentSecondaryId = { [weak self] in self?.secondSession?.id }
+        menuBar?.onPitHomeChanged = { [weak self] home in
+            self?.secondView?.pitHome = (home == .left) ? .right : .left
+        }
 
         if let saved = UserDefaults.standard.string(forKey: "secondCarSession"),
            let ref = Transcript.recentSessions(limit: 10).first(where: { $0.id == saved }) {
@@ -124,7 +128,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let v = TrackView(frame: CGRect(origin: .zero, size: window.frame.size))
         v.autoresizingMask = [.width, .height]
         v.laneAnchor = trackView.laneAnchor
-        v.pitHome = .left
+        // Always the opposite end from the primary, so they never fight over
+        // the same box.
+        v.pitHome = trackView.pitHome == .left ? .right : .left
         // A different livery from the primary, so the two are tellable apart.
         if let alt = CarRegistry.all.first(where: { $0.id != trackView.car.id }) { v.car = alt }
         w.contentView = v
