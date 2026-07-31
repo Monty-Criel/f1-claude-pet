@@ -1,0 +1,148 @@
+import AppKit
+import ImageIO
+
+/// Rasterises a `Car` into a crisp pixel sprite.
+///
+/// The car is drawn at its small native grid with anti-aliasing off, then the
+/// caller blits it up with nearest-neighbour sampling. That combination is what
+/// produces hard pixel edges instead of a blurry upscale.
+enum CarRenderer {
+
+    /// Render one frame of a car.
+    /// - Parameters:
+    ///   - wheelAngle: rotation of the wheels, in radians.
+    ///   - facingRight: mirrored when the car is heading the other way.
+    ///   - wheelSpin: 0…1, how much motion blur to put through the rims.
+    ///   - deflation: 0…1 puncture on the driven tyre. Squashes it and drops
+    ///     that corner of the car, so a failure is legible even in silhouette.
+    static func image(for car: any Car,
+                      wheelAngle: CGFloat = 0,
+                      facingRight: Bool = true,
+                      wheelSpin: CGFloat = 0,
+                      deflation: CGFloat = 0) -> CGImage? {
+
+        let w = Int(car.pixelSize.width)
+        let h = Int(car.pixelSize.height)
+
+        guard let ctx = CGContext(data: nil,
+                                  width: w, height: h,
+                                  bitsPerComponent: 8,
+                                  bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+
+        ctx.setAllowsAntialiasing(false)
+        ctx.setShouldAntialias(false)
+        ctx.interpolationQuality = .none
+
+        if !facingRight {
+            ctx.translateBy(x: CGFloat(w), y: 0)
+            ctx.scaleBy(x: -1, y: 1)
+        }
+
+        // Chassis is raked; the wheels are not, so the tyres stay flat on the road.
+        ctx.saveGState()
+        // A flat rear tyre drops the tail, i.e. it eats into the rake.
+        let effectiveRake = car.rakeDegrees - deflation * (car.rakeDegrees + 4)
+        if effectiveRake != 0 {
+            let pivot = car.rakePivot
+            ctx.translateBy(x: pivot.x, y: pivot.y)
+            // Negative angle pitches the nose down, which lifts the tail.
+            ctx.rotate(by: -effectiveRake * .pi / 180)
+            ctx.translateBy(x: -pivot.x, y: -pivot.y)
+        }
+        // Applied inside the rake so the car still sits level on its tyres.
+        ctx.scaleBy(x: car.chassisStretch.width, y: car.chassisStretch.height)
+        car.drawChassis(in: ctx)
+        ctx.restoreGState()
+
+        for wheel in car.wheels {
+            draw(wheel, of: car, in: ctx, angle: wheelAngle, spin: wheelSpin,
+                 deflation: wheel.isDriven ? deflation : 0)
+        }
+
+        return ctx.makeImage()
+    }
+
+    private static func draw(_ wheel: Wheel,
+                             of car: any Car,
+                             in ctx: CGContext,
+                             angle: CGFloat,
+                             spin: CGFloat,
+                             deflation: CGFloat = 0) {
+        // A punctured tyre squashes vertically, bulges sideways and sits down
+        // on a flat contact patch. The rim keeps its shape and stays visible
+        // throughout — a deflated tyre, not a wheel that has fallen off.
+        let squash = 1 - deflation * 0.34
+        let bulge = 1 + deflation * 0.26
+        let centreY = wheel.center.y - wheel.radius * deflation * 0.30
+
+        ctx.setFillColor(car.tyreColor.cgColor)
+        ctx.fillEllipse(in: CGRect(x: wheel.center.x - wheel.radius * bulge,
+                                   y: centreY - wheel.radius * squash,
+                                   width: wheel.radius * 2 * bulge,
+                                   height: wheel.radius * 2 * squash))
+
+        if deflation > 0.15 {
+            // Flat-spotted contact patch where the sidewall has collapsed onto
+            // the road, plus the sidewall bulging out either side of it.
+            let patchW = wheel.radius * (1.1 + deflation * 0.7)
+            ctx.fill(CGRect(x: wheel.center.x - patchW / 2,
+                            y: centreY - wheel.radius * squash,
+                            width: patchW,
+                            height: wheel.radius * 0.45 * deflation))
+        }
+
+        // Rim — always drawn, and it stays round even when the tyre is flat.
+        let rimR = wheel.radius * 0.55
+        ctx.setFillColor(car.rimColor.withAlphaComponent(1 - spin * 0.45).cgColor)
+        ctx.fillEllipse(in: CGRect(x: wheel.center.x - rimR,
+                                   y: centreY - rimR,
+                                   width: rimR * 2,
+                                   height: rimR * 2))
+
+        // Spokes, which are what actually read as rotation.
+        ctx.saveGState()
+        ctx.translateBy(x: wheel.center.x, y: wheel.center.y)
+        ctx.rotate(by: angle)
+        ctx.setStrokeColor(car.tyreColor.withAlphaComponent(1 - spin * 0.7).cgColor)
+        ctx.setLineWidth(0.9)
+        let spokes = 4
+        for i in 0..<spokes {
+            let a = CGFloat(i) * (.pi * 2 / CGFloat(spokes))
+            ctx.move(to: .zero)
+            ctx.addLine(to: CGPoint(x: cos(a) * rimR, y: sin(a) * rimR))
+        }
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
+    /// Write a magnified PNG of a car — used by `--export-sprite` to eyeball
+    /// the artwork without squinting at the Dock.
+    static func exportPNG(car: any Car, to path: String, scale: CGFloat = 8,
+                          deflation: CGFloat = 0) -> Bool {
+        guard let sprite = image(for: car, wheelAngle: 0.3, deflation: deflation) else { return false }
+
+        let w = Int(car.pixelSize.width * scale)
+        let h = Int(car.pixelSize.height * scale)
+        guard let ctx = CGContext(data: nil, width: w, height: h,
+                                  bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return false }
+
+        // Mid-grey backdrop so transparent areas and dark navy stay legible.
+        ctx.setFillColor(NSColor(white: 0.45, alpha: 1).cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.interpolationQuality = .none
+        ctx.draw(sprite, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        guard let out = ctx.makeImage() else { return false }
+        let url = URL(fileURLWithPath: path)
+        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil)
+        else { return false }
+        CGImageDestinationAddImage(dest, out, nil)
+        return CGImageDestinationFinalize(dest)
+    }
+}

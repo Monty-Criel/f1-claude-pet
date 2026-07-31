@@ -1,0 +1,90 @@
+#!/bin/sh
+# Bridge between Claude Code hooks and the pet.
+#
+# Usage (from ~/.claude/settings.json):  scripts/hook <EventName>
+# The hook payload arrives as JSON on stdin.
+#
+# Three rules, because this runs inside Claude Code:
+#   1. Never write to stdout. Some events inject a hook's stdout straight into
+#      Claude's context, so anything printed here would cost tokens on every
+#      single prompt.
+#   2. Never exit non-zero, and never exit 2 in particular — that is the
+#      "block this tool call" signal. A broken pet must not stop real work.
+#   3. Never block. Everything here is a few milliseconds of shell plus one
+#      ~5ms binary call.
+set -u
+
+BIN="$HOME/Documents/GitHub/f1-dock-pet/.build/debug/F1DockPet"
+EVENT="${1:-}"
+
+# Pet not built or not installed: do nothing at all, silently.
+[ -x "$BIN" ] || exit 0
+
+PAYLOAD=$(cat 2>/dev/null) || PAYLOAD=''
+
+# Remember which session (and project) this event belongs to, so the pet's
+# reply panel can resume the right conversation later. Never overwrite with
+# an empty id — some events carry no session in their payload.
+SID=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null) || SID=''
+if [ -n "$SID" ]; then
+    mkdir -p "$HOME/.f1-dock-pet" 2>/dev/null || true
+    printf '%s' "$PAYLOAD" | jq -r '"\(.session_id)\n\(.cwd // "")"' \
+        > "$HOME/.f1-dock-pet/session" 2>/dev/null || true
+fi
+
+notify() {
+    if [ -n "${2:-}" ]; then
+        "$BIN" --notify "$1" --message "$2" >/dev/null 2>&1 || true
+    else
+        "$BIN" --notify "$1" >/dev/null 2>&1 || true
+    fi
+}
+
+# Pull a human-readable detail out of the tool input: a filename where there is
+# one, otherwise the description, command or pattern.
+detail_of() {
+    printf '%s' "$PAYLOAD" | jq -r '
+        if   .tool_input.file_path   then (.tool_input.file_path | split("/") | last)
+        elif .tool_input.description then .tool_input.description
+        elif .tool_input.command     then .tool_input.command
+        elif .tool_input.pattern     then .tool_input.pattern
+        else empty end' 2>/dev/null || true
+}
+
+tool_of() {
+    printf '%s' "$PAYLOAD" | jq -r '.tool_name // empty' 2>/dev/null || true
+}
+
+case "$EVENT" in
+    SessionStart|SessionEnd)
+        notify idle
+        ;;
+    UserPromptSubmit)
+        notify launch
+        ;;
+    Notification)
+        notify waiting
+        ;;
+    Stop)
+        notify victory
+        ;;
+    PostToolUse)
+        TOOL=$(tool_of)
+        DETAIL=$(detail_of)
+        if [ -n "$DETAIL" ] && [ -n "$TOOL" ]; then
+            notify boost "$TOOL: $DETAIL"
+        else
+            notify boost "${TOOL:-}"
+        fi
+        ;;
+    PostToolUseFailure)
+        TOOL=$(tool_of)
+        if [ -n "$TOOL" ]; then
+            notify spin "$TOOL failed"
+        else
+            notify spin
+        fi
+        ;;
+esac
+
+exit 0

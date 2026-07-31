@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Convenience wrapper for driving the pet during development.
+#
+#   scripts/pet start          build if needed, (re)launch the pet
+#   scripts/pet stop           kill it
+#   scripts/pet restart        rebuild and relaunch
+#   scripts/pet <state>        push a state: idle launch racing boost
+#                              waiting victory spin
+#   scripts/pet probe          print the Dock geometry it resolved
+#   scripts/pet sprite [path]  export a magnified PNG of the car
+set -euo pipefail
+
+# Resolve symlinks before working out the repo root, so this still finds the
+# project when invoked through a symlink on PATH (e.g. ~/.local/bin/pet).
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [ "${SOURCE:0:1}" = "/" ] || SOURCE="$DIR/$SOURCE"
+done
+ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+
+BIN="$ROOT/.build/debug/F1DockPet"
+APP="$ROOT/F1DockPet.app"
+
+build() { (cd "$ROOT" && swift build); }
+stop()  { pkill -f 'F1DockPet' 2>/dev/null || true; sleep 0.3; }
+
+# Fully detach: nohup + closed stdio + disown. Without all three the pet stays
+# in the caller's process group, so anything that kills the calling shell — a
+# tool timeout, closing the terminal — takes the pet down with it.
+# Launch the .app rather than the bare binary: macOS refuses to display a menu
+# bar status item for an unbundled process, and the bundle also gives the pet a
+# stable identity for its Accessibility grant.
+start() {
+    "$ROOT/scripts/build-app.sh" >/dev/null
+    stop
+    open -a "$APP"
+    sleep 1
+    echo "pet running (pid $(pgrep -f F1DockPet | head -1))"
+}
+
+case "${1:-start}" in
+  start)   start ;;
+  stop)    stop; echo "pet stopped" ;;
+  restart) start ;;
+  probe)   build; "$BIN" --probe ;;
+  sprite)  build; "$BIN" --export-sprite "${2:-/tmp/rb22.png}" ;;
+  idle|launch|racing|boost|waiting|victory|spin)
+           "$BIN" --notify "$1" ;;
+  *)       sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 2 ;;
+esac
