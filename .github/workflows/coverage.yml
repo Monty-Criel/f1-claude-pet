@@ -1,0 +1,32 @@
+name: Coverage
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: Coverage and badge
+    runs-on: macos-15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run coverage
+        run: ./scripts/coverage --check
+
+      - name: Regenerate badge
+        run: ./scripts/coverage --badge
+
+      # The badge is committed, so a change here means someone moved coverage
+      # without refreshing it. Same guard boxbox-labs uses.
+      - name: Verify coverage badge is current
+        run: git diff --exit-code -- docs/coverage.svg

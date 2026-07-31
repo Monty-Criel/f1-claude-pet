@@ -9,6 +9,8 @@
 #   scripts/pet restart        same as start
 #   scripts/pet <state>        push a state: idle launch racing boost
 #                              waiting victory crash
+#   scripts/pet test           run the test suite
+#   scripts/pet coverage       run tests under coverage and refresh the badge
 #   scripts/pet probe          print the Dock geometry it resolved
 #   scripts/pet sprite [path]  export a magnified PNG of the car
 set -euo pipefail
@@ -64,6 +66,8 @@ case "${1:-start}" in
   stop)    stop; echo "pet stopped" ;;
   restart) start ;;
   rebuild) rebuild ;;
+  test)    build; "$BIN" --self-test ;;
+  coverage) "$ROOT/scripts/coverage" "${2:---badge}" ;;
   probe)   build; "$BIN" --probe ;;
   sprite)  build; "$BIN" --export-sprite "${2:-/tmp/rb22.png}" ;;
   idle|launch|racing|boost|waiting|victory|spin|crash)

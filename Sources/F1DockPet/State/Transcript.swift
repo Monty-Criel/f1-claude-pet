@@ -299,10 +299,16 @@ enum Transcript {
     /// Subagents and background shells from the recent transcript, oldest
     /// first. Running ones last, since those are what you are waiting on.
     static func agentRuns(id: String, cwd: String, limit: Int = 8) -> [AgentRun] {
+        agentRuns(fromLines: tailLines(id: id, cwd: cwd), limit: limit)
+    }
+
+    /// Split out from the file reading so it can be exercised against known
+    /// transcript lines rather than whatever happens to be on disk.
+    static func agentRuns(fromLines lines: [String], limit: Int = 8) -> [AgentRun] {
         var pending: [(id: String, kind: AgentRun.Kind, label: String)] = []
         var finished = Set<String>()
 
-        for line in tailLines(id: id, cwd: cwd) {
+        for line in lines {
             // A background shell gets its tool_result the instant it starts —
             // that is only the acknowledgement. Its real completion arrives
             // later as a task notification quoting the original call's id.
@@ -419,7 +425,7 @@ enum Transcript {
     }
 
     /// A gerund for what Claude is up to, from the tool it last reached for.
-    private static func verb(for tool: String?) -> String {
+    static func verb(for tool: String?) -> String {
         switch tool ?? "" {
         case "Write":                      return "Creating"
         case "Edit", "NotebookEdit":       return "Editing"
