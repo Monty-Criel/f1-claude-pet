@@ -29,6 +29,8 @@ final class ChatController: NSObject {
 
     private let pinButton = NSButton()
     private let closeButton = NSButton()
+    private let spinner = WheelSpinner(frame: .zero)
+    private let workLabel = NSTextField(labelWithString: "")
 
     private weak var trackView: TrackView?
     private var running = false
@@ -58,7 +60,9 @@ final class ChatController: NSObject {
     }
 
     private static let width: CGFloat = 460
-    private static let height: CGFloat = 340
+    /// Tall enough that the Usage tab fits its bars, histogram and stats
+    /// without scrolling.
+    private static let height: CGFloat = 560
 
     // Claude orange, everywhere the panel needs an accent.
     private var accent: NSColor { Theme.accent }
@@ -70,6 +74,21 @@ final class ChatController: NSObject {
                           backing: .buffered, defer: false)
         super.init()
         buildUI()
+        NotificationCenter.default.addObserver(
+            forName: Theme.changed, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.applyTheme() }
+            }
+    }
+
+    /// Repaint everything that carries the accent, after a theme change.
+    private func applyTheme() {
+        panel.contentView?.layer?.backgroundColor = Theme.panelBackground.cgColor
+        stripe?.layer?.backgroundColor = accent.cgColor
+        rebuildTabs()
+        applyPinState()
+        lastRendered = ""            // role tags and bars are accent-coloured
+        spinner.needsDisplay = true
+        reload()
     }
 
     // MARK: - chrome
@@ -142,6 +161,18 @@ final class ChatController: NSObject {
         pinButton.target = self
         pinButton.action = #selector(togglePin)
         content.addSubview(pinButton)
+
+        // Working indicator: a spinning Pirelli wheel trailing themed smoke,
+        // with the same numbers Claude Code shows beside its own spinner —
+        // all read off the transcript, so it costs nothing to display.
+        spinner.frame = CGRect(x: inset, y: 46, width: 26, height: 22)
+        content.addSubview(spinner)
+
+        workLabel.frame = CGRect(x: inset + 30, y: 48, width: Self.width - inset * 2 - 30, height: 16)
+        workLabel.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
+        workLabel.lineBreakMode = .byTruncatingTail
+        workLabel.isHidden = true
+        content.addSubview(workLabel)
 
         subheader.frame = CGRect(x: inset + 42, y: Self.height - 40, width: Self.width - inset * 2 - 100, height: 13)
         subheader.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
@@ -224,6 +255,7 @@ final class ChatController: NSObject {
             selected = sessions.first { $0.id == StateChannel.readSession()?.id } ?? sessions.first
         }
         rebuildTabs()
+        applyLayout()
         applyPinState()
         stripe?.layer?.backgroundColor = accent.cgColor
         reload()
@@ -303,14 +335,31 @@ final class ChatController: NSObject {
         selected = sessions[sender.tag]
         lastRendered = ""          // force a redraw of the new conversation
         rebuildTabs()
+        applyLayout()
         reload()
     }
 
     @objc private func selectUsage() {
+        // ⌥-click forces a live refetch; a plain click uses the cache, which
+        // avoids a keychain prompt.
+        let force = NSEvent.modifierFlags.contains(.option)
         showingUsage = true
         lastRendered = ""
         rebuildTabs()
-        reload()
+        applyLayout()
+        reloadUsage(force: force)
+    }
+
+    /// The Usage tab has nothing to type into, so it gets the composer's space
+    /// and runs full height.
+    private func applyLayout() {
+        input.isHidden = showingUsage
+        let bottom: CGFloat = showingUsage ? 14 : 48
+        scroll.frame = CGRect(x: 12, y: bottom, width: Self.width - 24,
+                              height: Self.height - bottom - 78)
+        transcript.frame = CGRect(origin: .zero, size: scroll.contentSize)
+        transcript.textContainer?.containerSize = NSSize(width: scroll.contentSize.width,
+                                                         height: CGFloat.greatestFiniteMagnitude)
     }
 
     @objc private func togglePin() {
@@ -347,8 +396,11 @@ final class ChatController: NSObject {
         // Right-align to the car rather than centring: the panel then reads as
         // hanging off the car, and its edge lines up with the rear wing when
         // the car is facing left — which is how it parks.
+        //
+        // Clear the radio bubble as well as the car: when a bubble is up it is
+        // taller than the car, and anchoring to the car alone buries it.
         var x = car.maxX - Self.width + 18
-        var y = car.maxY + 12
+        var y = (trackView?.contentTopScreenY ?? car.maxY) + 12
         x = max(bounds.minX + 8, min(x, bounds.maxX - Self.width - 8))
         y = min(y, bounds.maxY - Self.height - 8)
 
@@ -395,20 +447,60 @@ final class ChatController: NSObject {
 
         let state = trackView?.currentState ?? .idle
         updateLamps(for: state)
+        updateWorkingRow(id: id, cwd: cwd, state: state)
 
         setBody(preserveScroll: preserveScroll, render(Transcript.recent(id: id, cwd: cwd, limit: 40)))
     }
 
+    /// The spinner row: wheel, verb, elapsed, tokens — shown only while the
+    /// session the hooks are watching is actually mid-turn.
+    private func updateWorkingRow(id: String, cwd: String, state: PetState) {
+        let isLive = id == StateChannel.readSession()?.id
+        let working = isLive && (state == .launch || state == .racing || state == .boost)
+
+        spinner.isSpinning = working
+        workLabel.isHidden = !working
+        guard working else {
+            // Give the conversation its space back.
+            scroll.frame.origin.y = showingUsage ? 14 : 48
+            scroll.frame.size.height = Self.height - scroll.frame.origin.y - 78
+            return
+        }
+
+        // Sit the conversation above the spinner row.
+        scroll.frame.origin.y = 72
+        scroll.frame.size.height = Self.height - 72 - 78
+
+        let stats = Transcript.turnStats(id: id, cwd: cwd)
+        var text = stats.verb
+        if let start = StateChannel.turnStart() {
+            let elapsed = Int(Date().timeIntervalSince(start))
+            if elapsed >= 0, elapsed < 86_400 {
+                text += elapsed < 60 ? "  \(elapsed)s"
+                    : "  \(elapsed / 60)m \(elapsed % 60)s"
+            }
+        }
+        if stats.outputTokens > 0 { text += "  ·  " + stats.tokenText }
+
+        workLabel.attributedStringValue = NSAttributedString(string: text, attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: accent.withAlphaComponent(0.9)])
+    }
+
     // MARK: - usage tab
 
-    private func reloadUsage(preserveScroll: Bool = false) {
+    private func reloadUsage(preserveScroll: Bool = false, force: Bool = false) {
         header.stringValue = "PLAN USAGE"
-        subheader.stringValue = "live from Anthropic · refreshes every minute"
+        subheader.stringValue = "plan limits \(UsageService.freshnessNote) · ⌥-click the tab to refresh now"
+        spinner.isSpinning = false
+        workLabel.isHidden = true
         updateLamps(for: trackView?.currentState ?? .idle)
         setBody(preserveScroll: preserveScroll, renderUsage())
 
-        UsageService.refresh { [weak self] in
+        UsageService.refresh(force: force) { [weak self] in
             guard let self, self.showingUsage else { return }
+            self.subheader.stringValue =
+                "plan limits \(UsageService.freshnessNote) · ⌥-click the tab to refresh now"
             self.setBody(preserveScroll: true, self.renderUsage())
         }
     }
@@ -418,15 +510,14 @@ final class ChatController: NSObject {
         let dim: [NSAttributedString.Key: Any] = [
             .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.5)]
 
+        let out = NSMutableAttributedString()
+
         if UsageService.rows.isEmpty {
-            if let error = UsageService.error {
-                return NSAttributedString(string: "Could not load plan usage.\n\n\(error)",
-                                          attributes: dim)
-            }
-            return NSAttributedString(string: "Fetching plan usage…", attributes: dim)
+            let message = UsageService.error
+                ?? "Fetching plan limits…\n\nIf nothing appears, ⌥-click the Usage tab to try again."
+            out.append(NSAttributedString(string: message + "\n\n", attributes: dim))
         }
 
-        let out = NSMutableAttributedString()
         for row in UsageService.rows {
             let filled = min(14, max(0, Int((Double(row.percent) / 100 * 14).rounded())))
             let barColor: NSColor = row.percent >= 90 ? .systemRed
@@ -440,7 +531,8 @@ final class ChatController: NSObject {
                 .font: body, .foregroundColor: barColor]))
             out.append(NSAttributedString(string: String(repeating: "░", count: 14 - filled), attributes: [
                 .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.18)]))
-            out.append(NSAttributedString(string: "  \(row.percent)%", attributes: [
+            out.append(NSAttributedString(string: "  " + (row.valueText ?? "\(row.percent)%"),
+                                          attributes: [
                 .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.88)]))
             out.append(NSAttributedString(string: row.resets.isEmpty ? "\n\n" : "   \(row.resets)\n\n",
                                           attributes: dim))
@@ -479,7 +571,7 @@ final class ChatController: NSObject {
             .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .bold),
             .foregroundColor: accent]))
         for stat in UsageService.stats() {
-            out.append(NSAttributedString(string: stat.label.padding(toLength: 14, withPad: " ",
+            out.append(NSAttributedString(string: stat.label.padding(toLength: 17, withPad: " ",
                                                                      startingAt: 0), attributes: [
                 .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.55)]))
             out.append(NSAttributedString(string: stat.value + "\n", attributes: [

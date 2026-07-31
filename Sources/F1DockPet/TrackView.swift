@@ -209,6 +209,19 @@ final class TrackView: NSView {
                                              width: carSize.width, height: carSize.height))
     }
 
+    /// Where the last radio bubble was drawn, in view coordinates. `nil` when
+    /// no bubble is showing.
+    private var lastBubbleRect: CGRect?
+
+    /// Top of everything the car currently occupies on screen — the car, plus
+    /// the bubble when one is up. The chat panel clips above this so it never
+    /// lands on top of the radio call.
+    var contentTopScreenY: CGFloat? {
+        guard let window, let car = carScreenRect else { return nil }
+        guard let bubble = lastBubbleRect else { return car.maxY }
+        return max(car.maxY, window.convertToScreen(bubble).maxY)
+    }
+
     /// The only part of the window that accepts clicks, padded a little so a
     /// moving target stays catchable.
     private var carHitBox: CGRect {
@@ -869,6 +882,8 @@ final class TrackView: NSView {
 
         if bubbleAlpha > 0.01, let text = bubbleText {
             drawBubble(text, alpha: bubbleAlpha)
+        } else {
+            lastBubbleRect = nil
         }
     }
 
@@ -959,6 +974,7 @@ final class TrackView: NSView {
         ctx.setShouldAntialias(true)
 
         let box = CGRect(x: boxX, y: boxY, width: boxW, height: boxH)
+        lastBubbleRect = box
         let boxPath = CGPath(roundedRect: box, cornerWidth: 6, cornerHeight: 6, transform: nil)
         ctx.setFillColor(Theme.bubbleBackground.withAlphaComponent(0.88 * alpha).cgColor)
         ctx.addPath(boxPath)
