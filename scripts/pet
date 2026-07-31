@@ -8,7 +8,7 @@
 #   scripts/pet stop           kill it
 #   scripts/pet restart        same as start
 #   scripts/pet <state>        push a state: idle launch racing boost
-#                              waiting victory spin
+#                              waiting victory crash
 #   scripts/pet probe          print the Dock geometry it resolved
 #   scripts/pet sprite [path]  export a magnified PNG of the car
 set -euo pipefail
@@ -66,7 +66,7 @@ case "${1:-start}" in
   rebuild) rebuild ;;
   probe)   build; "$BIN" --probe ;;
   sprite)  build; "$BIN" --export-sprite "${2:-/tmp/rb22.png}" ;;
-  idle|launch|racing|boost|waiting|victory|spin)
+  idle|launch|racing|boost|waiting|victory|spin|crash)
            "$BIN" --notify "$1" ;;
   *)       sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 2 ;;
 esac
