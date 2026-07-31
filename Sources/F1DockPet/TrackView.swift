@@ -89,6 +89,11 @@ final class TrackView: NSView {
     private var stintLapsRemaining: Int = 1
     /// Bottoming-out sparks, struck at random while pushing.
     private var kerbSparks: CGFloat = 0
+    /// Seconds left of the locked-brake slide that opens a failure at speed.
+    private var crashSlide: CGFloat = 0
+    /// How long that slide lasted, so the breakdown that follows still plays
+    /// from its own beginning.
+    private var crashSlideElapsed: CGFloat = 0
     /// Cheap deterministic-ish jitter for picking stint lengths.
     private var rng: UInt64 = 0x2545F4914F6CDD1D
 
@@ -454,6 +459,12 @@ final class TrackView: NSView {
             bigSmokeBillow = livelyMode ? 2.4 : 1.6
         case .spin:
             bubbleText = caption ?? "YELLOW FLAG"
+            // Coming in hot? Lock the brakes up and let it slide before
+            // anything breaks — a failure at speed should look like one.
+            // The slide is scaled to how fast it was going, so a car that was
+            // already crawling just stops.
+            crashSlide = velocity > 60 ? min(2.2, 0.35 + velocity / 420) : 0
+            crashSlideElapsed = 0
         case .boost:
             break   // handled above; never becomes a resting state
         }
@@ -802,8 +813,29 @@ final class TrackView: NSView {
             // dead where it was, blows a rear tyre, and sits there smoking.
             // It stays broken until something else happens, so a failure you
             // walked away from is still visible when you come back.
+            //
+            // Fail at speed and it locks the brakes first, sliding several car
+            // lengths on flat-spotted tyres before anything actually breaks.
+            if crashSlide > 0 {
+                crashSlide -= dt
+                isBraking = true
+                // Locked, not spinning: the wheels stop turning while the car
+                // keeps going, which is what puts the smoke down. Movement
+                // itself is integrated centrally from `velocity`.
+                tyreSpin = 1
+                wiggle = sin(CGFloat(stateAge) * 34) * 2.2 * min(1, velocity / 200)
+                velocity = max(0, velocity - 260 * dt * TrackView.speedFactor)
+                bigSmokeRemaining = max(bigSmokeRemaining, 0.2)
+                bigSmokeBillow = max(bigSmokeBillow, 2.2)
+                if velocity < 12 { crashSlide = 0 }     // slide over; now it breaks
+                if crashSlide <= 0 { crashSlideElapsed = CGFloat(stateAge) }
+                return
+            }
+
             velocity = max(0, velocity - 900 * dt)
-            let t = CGFloat(stateAge)
+            // Time since the slide ended, so the breakdown always plays in
+            // full rather than being eaten by however long the car slid.
+            let t = max(0, CGFloat(stateAge) - crashSlideElapsed)
             tyreSpin = max(0, 0.5 - t)                  // brief lock-up, then nothing
             puncture = min(1, t / 0.7)                  // tyre lets go quickly
             // Flares up fast, then settles into a long steady burn rather than
