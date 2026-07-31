@@ -118,6 +118,26 @@ final class MenuBarController {
         tyresItem.subtitle = "F1 cars only"
         menu.addItem(tyresItem)
 
+        // Accent colour for the panel, bubble and spinner.
+        let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
+        let themes = NSMenu()
+        for choice in ThemeColor.allCases {
+            let entry = item(choice.displayName, #selector(selectTheme(_:)))
+            entry.representedObject = choice.rawValue
+            entry.state = ThemeColor.selected == choice ? .on : .off
+            // A colour swatch reads faster than the name alone.
+            let swatch = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
+                choice.color.setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
+                return true
+            }
+            entry.image = swatch
+            themes.addItem(entry)
+        }
+        themeItem.submenu = themes
+        themeItem.subtitle = ThemeColor.selected.displayName
+        menu.addItem(themeItem)
+
         // Behaviour
         let lively = item("Lively mode", #selector(toggleLively))
         lively.state = (trackView?.livelyMode ?? false) ? .on : .off
@@ -170,6 +190,14 @@ final class MenuBarController {
         guard let raw = sender.representedObject as? String,
               let compound = TyreCompound(rawValue: raw) else { return }
         TyreCompound.selected = compound
+        rebuild()
+    }
+
+    @objc private func selectTheme(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let choice = ThemeColor(rawValue: raw) else { return }
+        ThemeColor.selected = choice        // posts Theme.changed
+        trackView?.needsDisplay = true
         rebuild()
     }
 
