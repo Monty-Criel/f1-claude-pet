@@ -17,20 +17,46 @@ enum UsageService {
         let label: String
         let percent: Int
         let resets: String
+        /// Shown instead of "NN%" when the row is money rather than a quota.
+        var valueText: String?
+
+        init(label: String, percent: Int, resets: String, valueText: String? = nil) {
+            self.label = label
+            self.percent = percent
+            self.resets = resets
+            self.valueText = valueText
+        }
     }
 
     private(set) static var rows: [Row] = []
     private(set) static var error: String?
+    private(set) static var fetchedAt: Date?
     private static var lastFetch: Date = .distantPast
     private static var inFlight = false
+    private static var loadedCache = false
 
-    /// Refresh if the cache is stale (>60s). `onChange` fires only when new
-    /// data (or a new error) actually lands.
-    static func refresh(onChange: @escaping @MainActor () -> Void) {
-        guard !inFlight, Date().timeIntervalSince(lastFetch) > 60 else { return }
+    /// How long a fetch is good for.
+    ///
+    /// Deliberately long. Every fetch reads the OAuth token from the keychain,
+    /// and Claude Code rotates that token periodically — rewriting the item and
+    /// wiping the "Always Allow" grant with it. So each read risks another
+    /// password prompt, and the fix is to read rarely and remember the answer.
+    private static let cacheLifetime: TimeInterval = 30 * 60
+
+    private static var cacheFile: URL {
+        URL(fileURLWithPath: NSHomeDirectory() + "/.f1-dock-pet/usage.json")
+    }
+
+    /// Refresh if the cache is stale. `onChange` fires only when new data (or a
+    /// new error) actually lands. Pass `force` for an explicit user-driven
+    /// refresh, which is allowed to prompt.
+    static func refresh(force: Bool = false, onChange: @escaping @MainActor () -> Void) {
+        if !loadedCache { loadCache(); loadedCache = true }
+        guard !inFlight else { return }
+        if !force, Date().timeIntervalSince(lastFetch) < cacheLifetime { return }
 
         guard let token = accessToken() else {
-            error = "No Claude Code credentials readable from the keychain.\n\nIf macOS just asked about keychain access, approve it (Always Allow) and reopen this tab."
+            error = "Plan limits need one-off access to the Claude Code login item in your keychain.\n\nmacOS asks again whenever Claude Code rotates its token — that resets the app's access, and there is nothing this app can do about it. Everything below is read from local files and never prompts."
             lastFetch = Date()
             onChange()
             return
@@ -64,10 +90,61 @@ enum UsageService {
                     } else {
                         rows = parsed
                         error = nil
+                        fetchedAt = Date()
+                        saveCache()
                     }
                 }
             }
         }.resume()
+    }
+
+    // MARK: - disk cache
+
+    /// Keeps the last good numbers across restarts, so opening the tab shows
+    /// something immediately instead of triggering a keychain read.
+    private static func saveCache() {
+        let payload: [String: Any] = [
+            "fetchedAt": (fetchedAt ?? Date()).timeIntervalSince1970,
+            "rows": rows.map { row -> [String: Any] in
+                var entry: [String: Any] = ["label": row.label, "percent": row.percent,
+                                            "resets": row.resets]
+                if let text = row.valueText { entry["valueText"] = text }
+                return entry
+            },
+        ]
+        try? FileManager.default.createDirectory(
+            at: cacheFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        try? data.write(to: cacheFile, options: .atomic)
+    }
+
+    private static func loadCache() {
+        guard let data = try? Data(contentsOf: cacheFile),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let stamp = json["fetchedAt"] as? TimeInterval,
+              let raw = json["rows"] as? [[String: Any]]
+        else { return }
+
+        rows = raw.compactMap {
+            guard let label = $0["label"] as? String, let percent = $0["percent"] as? Int
+            else { return nil }
+            return Row(label: label, percent: percent, resets: $0["resets"] as? String ?? "",
+                       valueText: $0["valueText"] as? String)
+        }
+        fetchedAt = Date(timeIntervalSince1970: stamp)
+        // Treat a cached fetch as the last fetch, so a fresh launch doesn't
+        // immediately go back to the keychain.
+        lastFetch = fetchedAt ?? .distantPast
+    }
+
+    /// How stale the numbers on screen are.
+    static var freshnessNote: String {
+        guard let fetchedAt else { return "not fetched yet" }
+        let age = Int(Date().timeIntervalSince(fetchedAt))
+        if age < 90 { return "just now" }
+        if age < 3600 { return "\(age / 60) min ago" }
+        if age < 86_400 { return "\(age / 3600) h ago" }
+        return "\(age / 86_400) d ago"
     }
 
     // MARK: - parsing
@@ -94,6 +171,8 @@ enum UsageService {
                     found.append((order, Row(label: label,
                                              percent: min(100, max(0, percent)),
                                              resets: resetText(dict["resets_at"]))))
+                } else if key.contains("credit"), let row = creditRow(dict) {
+                    found.append((8, row))          // just above any unknowns
                 } else if depth < 3 {
                     walk(dict, depth: depth + 1)
                 }
@@ -101,6 +180,40 @@ enum UsageService {
         }
         walk(json, depth: 0)
         return found.sorted { $0.order < $1.order }.map(\.row)
+    }
+
+    /// Money rather than a quota: "Usage credits — $0.00 of $10.00".
+    ///
+    /// Field names here are guesswork against an undocumented payload, so this
+    /// accepts the plausible spellings and treats `*_cents` as cents.
+    private static func creditRow(_ dict: [String: Any]) -> Row? {
+        func amount(_ keys: [String]) -> Double? {
+            for key in keys {
+                if let value = dict[key] as? Double {
+                    return key.hasSuffix("_cents") ? value / 100 : value
+                }
+                if let value = dict[key] as? Int {
+                    return key.hasSuffix("_cents") ? Double(value) / 100 : Double(value)
+                }
+            }
+            return nil
+        }
+
+        let used = amount(["used", "used_cents", "spent", "spent_cents", "consumed", "amount_used"])
+        let total = amount(["limit", "limit_cents", "total", "total_cents",
+                            "granted", "granted_cents", "allowance"])
+        let remaining = amount(["remaining", "remaining_cents", "balance", "balance_cents"])
+
+        // Any two of used / remaining / total determine the third.
+        let spent = used ?? (total.flatMap { t in remaining.map { t - $0 } })
+        let cap = total ?? (used.flatMap { u in remaining.map { u + $0 } })
+        guard let spent, let cap, cap > 0 else { return nil }
+
+        let percent = Int((spent / cap * 100).rounded())
+        return Row(label: "Usage credits",
+                   percent: min(100, max(0, percent)),
+                   resets: resetText(dict["resets_at"] ?? dict["expires_at"]),
+                   valueText: String(format: "$%.2f of $%.2f", spent, cap))
     }
 
     private static func resetText(_ value: Any?) -> String {
@@ -207,11 +320,57 @@ enum UsageService {
         out.append(Stat(label: "Transcripts",
                         value: ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) + " on disk"))
 
+        // Busiest day and current streak, both from the per-day counts.
+        if let best = perDay.max(by: { $0.value < $1.value }), best.value > 0 {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "EEE d MMM"
+            out.append(Stat(label: "Busiest day",
+                            value: "\(fmt.string(from: best.key)) · \(best.value) prompts"))
+        }
+        var streak = 0
+        var cursor = calendar.startOfDay(for: Date())
+        // Today not being used yet shouldn't break a run — start from yesterday.
+        if perDay[cursor] == nil { cursor = calendar.date(byAdding: .day, value: -1, to: cursor) ?? cursor }
+        while (perDay[cursor] ?? 0) > 0 {
+            streak += 1
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = previous
+        }
+        if streak > 0 {
+            out.append(Stat(label: "Streak", value: "\(streak) day\(streak == 1 ? "" : "s") running"))
+        }
+
+        // Where the work happens, and which model does it — both scanned from
+        // the recent transcripts rather than guessed.
+        let recent = Transcript.recentSessions(limit: 12)
+        var projectCounts: [String: Int] = [:]
+        var modelCounts: [String: Int] = [:]
+        for session in recent {
+            projectCounts[session.project, default: 0] += 1
+            if let info = Transcript.contextInfo(id: session.id, cwd: session.cwd) {
+                modelCounts[info.modelName, default: 0] += 1
+            }
+        }
+        if let favourite = modelCounts.max(by: { $0.value < $1.value }) {
+            let share = Int(Double(favourite.value) / Double(max(1, modelCounts.values.reduce(0, +))) * 100)
+            out.append(Stat(label: "Favourite model", value: "\(favourite.key) · \(share)% of recent"))
+        }
+        let topProjects = projectCounts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .prefix(3)
+            .map { "\($0.key) (\($0.value))" }
+        if !topProjects.isEmpty {
+            out.append(Stat(label: "Top projects", value: topProjects.joined(separator: ", ")))
+        }
+
         // The session the hooks are following right now.
         if let live = StateChannel.readSession(),
            let info = Transcript.contextInfo(id: live.id, cwd: live.cwd) {
             out.append(Stat(label: "Live session", value: info.summary))
         }
+
+        // A little colour: what the pet has been up to.
+        out.append(Stat(label: "Current car", value: CarRegistry.selected.displayName))
+        out.append(Stat(label: "Tyres", value: TyreCompound.selected.displayName))
 
         statCache = out
         return out

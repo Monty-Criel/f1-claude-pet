@@ -60,6 +60,10 @@ case "$EVENT" in
         notify idle
         ;;
     UserPromptSubmit)
+        # Stamp the start of the turn so the pit wall can show elapsed time
+        # without asking anyone. Pure shell — no extra process.
+        mkdir -p "$HOME/.f1-dock-pet" 2>/dev/null || true
+        date +%s > "$HOME/.f1-dock-pet/turn-start" 2>/dev/null || true
         notify launch
         ;;
     Notification)

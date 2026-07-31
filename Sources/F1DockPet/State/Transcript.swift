@@ -263,6 +263,67 @@ enum Transcript {
         return nil
     }
 
+    /// What the current turn has cost and what it is doing — the numbers
+    /// Claude Code shows next to its own spinner.
+    ///
+    /// All of it comes off the transcript already on disk, so displaying it
+    /// costs nothing: output tokens since the last user message, and a verb
+    /// derived from the most recent tool call.
+    struct TurnStats {
+        let outputTokens: Int
+        let verb: String
+
+        var tokenText: String {
+            outputTokens >= 1000
+                ? String(format: "%.1fk tokens", Double(outputTokens) / 1000)
+                : "\(outputTokens) tokens"
+        }
+    }
+
+    static func turnStats(id: String, cwd: String) -> TurnStats {
+        var tokens = 0
+        var lastTool: String?
+
+        // Walk backwards to the last user message; everything after it belongs
+        // to the turn in progress.
+        for line in tailLines(id: id, cwd: cwd).reversed() {
+            guard line.count < maxLineLength,
+                  let data = line.data(using: .utf8),
+                  let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = record["type"] as? String
+            else { continue }
+
+            if type == "user" { break }
+            guard type == "assistant", let message = record["message"] as? [String: Any] else { continue }
+
+            if let usage = message["usage"] as? [String: Any],
+               let out = usage["output_tokens"] as? Int {
+                tokens += out
+            }
+            if lastTool == nil, let blocks = message["content"] as? [[String: Any]] {
+                lastTool = blocks.last { $0["type"] as? String == "tool_use" }?["name"] as? String
+            }
+        }
+        return TurnStats(outputTokens: tokens, verb: verb(for: lastTool))
+    }
+
+    /// A gerund for what Claude is up to, from the tool it last reached for.
+    private static func verb(for tool: String?) -> String {
+        switch tool ?? "" {
+        case "Write":                      return "Creating"
+        case "Edit", "NotebookEdit":       return "Editing"
+        case "Read":                       return "Reading"
+        case "Bash", "BashOutput":         return "Running"
+        case "Glob", "Grep":               return "Searching"
+        case "WebSearch", "WebFetch":      return "Browsing"
+        case "Task", "Agent":              return "Delegating"
+        case "TaskCreate", "TaskUpdate":   return "Planning"
+        case let name where name.hasPrefix("mcp__"): return "Connecting"
+        case "":                           return "Thinking"
+        default:                           return "Working"
+        }
+    }
+
     /// The most recent thing Claude actually said — used as the bubble text
     /// when a job finishes, instead of a canned "P1".
     static func lastAssistantText(id: String, cwd: String) -> String? {

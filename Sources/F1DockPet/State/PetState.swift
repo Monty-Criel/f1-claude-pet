@@ -166,6 +166,16 @@ enum StateChannel {
         return (id, cwd.isEmpty ? NSHomeDirectory() : cwd)
     }
 
+    /// When the current turn started, stamped by the `UserPromptSubmit` hook.
+    /// Lets the pit wall show elapsed time without polling anything.
+    static func turnStart() -> Date? {
+        let path = NSHomeDirectory() + "/.f1-dock-pet/turn-start"
+        guard let raw = try? String(contentsOfFile: path, encoding: .utf8),
+              let seconds = TimeInterval(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
     /// Modification date, used to notice repeat notifications of the same state
     /// (two `racing` events in a row should still re-trigger the animation).
     static func modified() -> Date? {
