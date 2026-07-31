@@ -19,6 +19,18 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/F1DockPet"
 
+# Icon, rendered from the same sprite the pet drives so the two never drift.
+ICONSET="$(mktemp -d)/AppIcon.iconset"
+mkdir -p "$ICONSET"
+"$BIN" --export-icon "$ICONSET/icon_1024.png" >/dev/null
+for size in 16 32 128 256 512; do
+    sips -z $size $size          "$ICONSET/icon_1024.png" --out "$ICONSET/icon_${size}x${size}.png"    >/dev/null 2>&1
+    sips -z $((size*2)) $((size*2)) "$ICONSET/icon_1024.png" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null 2>&1
+done
+rm -f "$ICONSET/icon_1024.png"
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null \
+    || echo "warning: iconutil failed, app will use the default icon"
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -27,11 +39,12 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key>              <string>F1DockPet</string>
     <key>CFBundleDisplayName</key>       <string>F1 Dock Pet</string>
     <key>CFBundleExecutable</key>        <string>F1DockPet</string>
+    <key>CFBundleIconFile</key>          <string>AppIcon</string>
     <key>CFBundleIdentifier</key>        <string>com.nibel.f1dockpet</string>
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundleVersion</key>           <string>1</string>
-    <key>LSMinimumSystemVersion</key>    <string>14.0</string>
+    <key>LSMinimumSystemVersion</key>    <string>15.0</string>
     <!-- Agent app: no Dock icon, no menu bar of its own, just the status item. -->
     <key>LSUIElement</key>               <true/>
     <key>NSHighResolutionCapable</key>   <true/>
@@ -39,8 +52,17 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Ad-hoc sign so the Accessibility grant sticks to a stable identity instead of
-# being revoked every time the binary changes.
-codesign --force --deep --sign - "$APP" 2>/dev/null || true
+# Sign with the stable "F1DockPet Dev" certificate when it exists (created by
+# scripts/setup-signing.sh). TCC keys the Accessibility grant on the signing
+# identity: with the certificate it survives rebuilds; with ad-hoc fallback it
+# is revoked on every rebuild and macOS re-prompts.
+IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+    | awk -F'"' '/F1DockPet Dev/{print $2; exit}')
+if [ -n "$IDENTITY" ]; then
+    codesign --force --deep --sign "$IDENTITY" "$APP"
+else
+    echo "warning: no 'F1DockPet Dev' identity — ad-hoc signing, Accessibility will not persist"
+    codesign --force --deep --sign - "$APP" 2>/dev/null || true
+fi
 
 echo "built $APP"

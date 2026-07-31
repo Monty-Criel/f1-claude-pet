@@ -16,6 +16,11 @@ final class MenuBarController {
     /// Opens the pit-wall chat. Wired by the app delegate.
     var onReply: (() -> Void)?
 
+    /// Second car management, wired by the app delegate: nil turns it off.
+    var onSecondCar: ((Transcript.SessionRef?) -> Void)?
+    var currentSecondaryId: (() -> String?)?
+    private var secondCandidates: [Transcript.SessionRef] = []
+
     init(trackView: TrackView, onQuit: @escaping () -> Void) {
         self.trackView = trackView
         self.onQuit = onQuit
@@ -35,6 +40,14 @@ final class MenuBarController {
         menu.autoenablesItems = false
 
         menu.addItem(item("Reply to Claude…", #selector(reply)))
+
+        // Only surfaced when it is actually missing, and it is the difference
+        // between the car tracking the Dock exactly and guessing the middle.
+        if !DockGeometry.isTrusted {
+            let grant = item("Grant Accessibility…", #selector(grantAccessibility))
+            grant.subtitle = "Needed to track the Dock exactly"
+            menu.addItem(grant)
+        }
         menu.addItem(.separator())
 
         let paused = trackView?.isPaused ?? false
@@ -59,6 +72,39 @@ final class MenuBarController {
         carsItem.submenu = cars
         menu.addItem(carsItem)
 
+        // A second car, parked on the left, bound to another session — its
+        // bubble shows that session's name and clicking it opens that chat.
+        let secondItem = NSMenuItem(title: "Second car", action: nil, keyEquivalent: "")
+        let second = NSMenu()
+        let currentSecond = currentSecondaryId?()
+
+        let off = item("Off", #selector(secondOff))
+        off.state = currentSecond == nil ? .on : .off
+        second.addItem(off)
+        second.addItem(.separator())
+
+        // Recent sessions. The one the primary car is living stays visible
+        // but disabled — silently hiding it made the list look mis-ordered.
+        let liveId = StateChannel.readSession()?.id
+        secondCandidates = []
+        for session in Transcript.recentSessions(limit: 5) {
+            if session.id == liveId {
+                let entry = NSMenuItem(title: session.label, action: nil, keyEquivalent: "")
+                entry.isEnabled = false
+                entry.subtitle = "first car's session"
+                second.addItem(entry)
+                continue
+            }
+            secondCandidates.append(session)
+            let entry = item(session.label, #selector(secondPick(_:)))
+            entry.tag = secondCandidates.count - 1
+            entry.state = session.id == currentSecond ? .on : .off
+            entry.subtitle = session.project
+            second.addItem(entry)
+        }
+        secondItem.submenu = second
+        menu.addItem(secondItem)
+
         // Behaviour
         let lively = item("Lively mode", #selector(toggleLively))
         lively.state = (trackView?.livelyMode ?? false) ? .on : .off
@@ -73,6 +119,7 @@ final class MenuBarController {
         for state in PetState.allCases {
             let entry = item(state.rawValue.capitalized, #selector(trigger(_:)))
             entry.representedObject = state.rawValue
+            entry.subtitle = state.summary
             tests.addItem(entry)
         }
         testItem.submenu = tests
@@ -143,6 +190,22 @@ final class MenuBarController {
     }
 
     @objc private func reply() { onReply?() }
+
+    @objc private func secondOff() {
+        onSecondCar?(nil)
+        rebuild()
+    }
+
+    @objc private func secondPick(_ sender: NSMenuItem) {
+        guard secondCandidates.indices.contains(sender.tag) else { return }
+        onSecondCar?(secondCandidates[sender.tag])
+        rebuild()
+    }
+
+    @objc private func grantAccessibility() {
+        DockGeometry.requestAccessibilityIfNeeded()
+        DockGeometry.openAccessibilitySettings()
+    }
 
     @objc private func quit() { onQuit() }
 }

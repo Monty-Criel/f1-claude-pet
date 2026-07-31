@@ -8,12 +8,15 @@ import AppKit
 /// visibly heavy rear.
 struct Porsche911GT3R: GT3Model {
     let id = "porsche-gt3"
-    let displayName = "Porsche 911 GT3 R"
+    let displayName = "Porsche 911 GT3 RS"
+    /// The classic works scheme: white body, black aero and wheels, with red
+    /// as the only other colour. Deliberately monochrome — the 911's shape is
+    /// the thing you recognise, so the paint gets out of its way.
     let livery = Livery(
-        primary: NSColor(srgbRed: 0.95, green: 0.85, blue: 0.05, alpha: 1),
-        shade:   NSColor(srgbRed: 0.60, green: 0.50, blue: 0.02, alpha: 1),
-        accent:  NSColor(srgbRed: 0.10, green: 0.10, blue: 0.12, alpha: 1),
-        trim:    NSColor(srgbRed: 0.85, green: 0.05, blue: 0.10, alpha: 1)
+        primary: NSColor(srgbRed: 0.95, green: 0.95, blue: 0.96, alpha: 1),
+        shade:   NSColor(srgbRed: 0.09, green: 0.09, blue: 0.10, alpha: 1),
+        accent:  NSColor(srgbRed: 0.11, green: 0.11, blue: 0.13, alpha: 1),
+        trim:    NSColor(srgbRed: 0.82, green: 0.06, blue: 0.10, alpha: 1)
     )
     // Short overhangs, wide rear track.
     let wheels = [
@@ -49,9 +52,19 @@ struct Porsche911GT3R: GT3Model {
             p.addCurve(to: pt(30, 17.6), control1: pt(28.4, 14.6), control2: pt(29, 16.4))
             p.closeSubpath()
         }
-        ctx.fill(livery.accent) { p in          // flank flash
-            p.polygon([pt(22, 7), pt(58, 6.6), pt(58, 9), pt(22, 9.6)])
+        // Black roof and rear deck sweeping down into the tail.
+        ctx.fill(livery.shade) { p in
+            p.move(to: pt(12, 12.6))
+            p.addCurve(to: pt(30, 18.4), control1: pt(16, 14.6), control2: pt(22, 18.2))
+            p.addLine(to: pt(38, 18.2))
+            p.addCurve(to: pt(46, 13.6), control1: pt(41, 17), control2: pt(44, 14.6))
+            p.addLine(to: pt(44, 12.9))
+            p.addCurve(to: pt(30, 16.9), control1: pt(41, 15.6), control2: pt(35, 16.9))
+            p.addLine(to: pt(16, 12.2))
+            p.closeSubpath()
         }
+        // Slim red stripe along the sill — the only colour on the car.
+        ctx.fillRect(livery.trim, 22, 6.6, 36, 0.9)
         drawArches(ctx)
         // Round headlight high on the wing — pure 911.
         ctx.setFillColor(livery.trim.cgColor)

@@ -63,7 +63,7 @@ struct SmokeSystem {
                 radius: (1.6 + random() * 2.4) * billow,
                 life: 1,
                 decay: 0.85 + random() * 0.55,
-                shade: 0.55 + random() * 0.45
+                shade: 0.62 + random() * 0.3
             ))
         }
     }
@@ -181,12 +181,43 @@ struct SmokeSystem {
                 // Ease the fade so puffs linger then vanish, rather than
                 // blinking out.
                 let alpha = max(0, p.life * p.life) * 0.5
-                let shade = 0.55 + p.shade * 0.45
-                ctx.setFillColor(NSColor(white: shade, alpha: alpha).cgColor)
-                ctx.fillEllipse(in: CGRect(x: p.position.x - p.radius,
-                                           y: p.position.y - p.radius,
-                                           width: p.radius * 2,
-                                           height: p.radius * 2))
+                // Pixel-art puffs: squares snapped to the same 2pt grid as the
+                // car sprite, so the smoke matches the artwork instead of
+                // looking like soft photographic circles behind pixel art.
+                let grid: CGFloat = 2
+                func snap(_ v: CGFloat) -> CGFloat { (v / grid).rounded() * grid }
+                let r = max(grid, snap(p.radius))
+                let x = snap(p.position.x)
+                let y = snap(p.position.y)
+
+                // A darker rim one pixel proud of the puff. Light smoke over a
+                // white window would otherwise vanish; the rim gives it an
+                // edge on any background without darkening the smoke itself.
+                // Skipped for near-black smoke, which needs no help.
+                if p.shade > 0.3 {
+                    ctx.setFillColor(NSColor(white: max(0, p.shade - 0.5),
+                                             alpha: alpha * 0.5).cgColor)
+                    ctx.fill(CGRect(x: x - r - grid, y: y - r - grid,
+                                    width: (r + grid) * 2, height: (r + grid) * 2))
+                }
+
+                // The stored shade IS the grey level — re-mapping it here was
+                // washing everything out, including the engine fire's
+                // supposedly near-black smoke.
+                ctx.setFillColor(NSColor(white: p.shade, alpha: alpha).cgColor)
+                ctx.fill(CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+
+                // Cauliflower lobes on the bigger puffs. Deterministic per
+                // particle — from its shade, not a RNG — so lobes don't dance
+                // frame to frame.
+                if r >= 4 {
+                    let lobe = max(grid, snap(r * 0.6))
+                    let side: CGFloat = p.shade > 0.75 ? 1 : -1
+                    ctx.fill(CGRect(x: x + side * r - lobe / 2, y: y + r - lobe / 2,
+                                    width: lobe, height: lobe))
+                    ctx.fill(CGRect(x: x - side * r - lobe / 2, y: y + r * 0.3,
+                                    width: lobe, height: lobe))
+                }
 
             case .spark:
                 // Bright, hot, and drawn as a short streak along its own

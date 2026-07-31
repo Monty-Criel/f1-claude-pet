@@ -52,6 +52,17 @@ if let i = CommandLine.arguments.firstIndex(of: "--notify") {
     exit(0)
 }
 
+// `--export-icon <path>` renders the app icon at 1024px; build-app.sh turns it
+// into an .icns.
+if let i = CommandLine.arguments.firstIndex(of: "--export-icon") {
+    let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : "icon.png"
+    let carId = CommandLine.arguments.firstIndex(of: "--car").map { CommandLine.arguments[$0 + 1] }
+    let car = carId.flatMap { CarRegistry.car(id: $0) } ?? CarRegistry.fallback
+    let ok = IconRenderer.exportPNG(car: car, to: path)
+    print(ok ? "wrote \(path)" : "failed to write \(path)")
+    exit(ok ? 0 : 1)
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

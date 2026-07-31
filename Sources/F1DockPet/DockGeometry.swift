@@ -95,16 +95,40 @@ enum DockGeometry {
             // there is no Dock on screen to sit on. (A width check would break
             // Split View, where each tile is only half the screen wide.)
             let fullHeight = f.height - screen.safeAreaInsets.top - 8
-            if rect.height >= fullHeight,
-               rect.minY <= f.minY + 2,
-               f.contains(CGPoint(x: rect.midX, y: rect.midY)) {
-                return true
-            }
+            guard rect.height >= fullHeight, rect.minY <= f.minY + 2 else { continue }
+
+            // Must genuinely be *this* display's window. A midpoint test is too
+            // loose with several monitors — a full-screen app on the next
+            // display over would drag the car off the Dock's screen. Require
+            // most of the window to actually lie within this screen.
+            let overlap = rect.intersection(f)
+            let overlapArea = overlap.width * overlap.height
+            let windowArea = max(rect.width * rect.height, 1)
+            if overlapArea / windowArea > 0.8 { return true }
         }
         return false
     }
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
+
+    /// Show the system Accessibility prompt if we don't already have it.
+    ///
+    /// This is what lets the pet read the Dock's exact rect — which display it
+    /// is on, where it starts and ends. Everything still works without it, the
+    /// car just keeps to the middle of the screen instead of the Dock's own
+    /// right-hand end.
+    static func requestAccessibilityIfNeeded() {
+        guard !AXIsProcessTrusted() else { return }
+        // The constant is an imported global var, which Swift 6 treats as
+        // shared mutable state; its literal value is stable API.
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    }
+
+    /// Open the Accessibility pane, for the menu bar item.
+    static func openAccessibilitySettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+        NSWorkspace.shared.open(url)
+    }
 
     /// Ask the Dock process for the bounds of its item list.
     private static func viaAccessibility() -> DockFrame? {
@@ -155,7 +179,16 @@ enum DockGeometry {
     /// Derive the Dock strip from the gap between `frame` and `visibleFrame`.
     /// Reliable in a real app bundle; returns nil when the gap reads as zero.
     private static func viaVisibleFrame() -> DockFrame? {
-        for screen in NSScreen.screens {
+        // Check the active display first: with "Displays have separate Spaces"
+        // the Dock moves to whichever screen you are working on, and taking
+        // the first screen in the list would strand the car on the other one.
+        var order = NSScreen.screens
+        if let main = NSScreen.main, let index = order.firstIndex(of: main) {
+            order.remove(at: index)
+            order.insert(main, at: 0)
+        }
+
+        for screen in order {
             let f = screen.frame, v = screen.visibleFrame
             let bottomGap = v.minY - f.minY
             if bottomGap > 4 {

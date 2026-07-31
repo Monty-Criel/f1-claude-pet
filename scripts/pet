@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Convenience wrapper for driving the pet during development.
 #
-#   scripts/pet start          build if needed, (re)launch the pet
+#   scripts/pet start          (re)launch the pet — does NOT rebuild, so the
+#                              Accessibility grant survives
+#   scripts/pet rebuild        recompile, re-bundle and relaunch (may drop the
+#                              Accessibility grant — re-approve if so)
 #   scripts/pet stop           kill it
-#   scripts/pet restart        rebuild and relaunch
+#   scripts/pet restart        same as start
 #   scripts/pet <state>        push a state: idle launch racing boost
 #                              waiting victory spin
 #   scripts/pet probe          print the Dock geometry it resolved
@@ -30,20 +33,37 @@ stop()  { pkill -f 'F1DockPet' 2>/dev/null || true; sleep 0.3; }
 # in the caller's process group, so anything that kills the calling shell — a
 # tool timeout, closing the terminal — takes the pet down with it.
 # Launch the .app rather than the bare binary: macOS refuses to display a menu
-# bar status item for an unbundled process, and the bundle also gives the pet a
-# stable identity for its Accessibility grant.
+# bar status item for an unbundled process.
+#
+# Deliberately does NOT rebuild. The app is ad-hoc signed, so rebuilding changes
+# its code identity and macOS silently revokes its Accessibility grant — which
+# is what lets the pet track the Dock exactly. Use `pet rebuild` when you have
+# actually changed the code, and expect to re-approve it afterwards.
 start() {
-    "$ROOT/scripts/build-app.sh" >/dev/null
+    [ -d "$APP" ] || "$ROOT/scripts/build-app.sh" >/dev/null
     stop
     open -a "$APP"
     sleep 1
     echo "pet running (pid $(pgrep -f F1DockPet | head -1))"
 }
 
+rebuild() {
+    "$ROOT/scripts/build-app.sh" >/dev/null
+    stop
+    open -a "$APP"
+    sleep 1
+    echo "pet rebuilt and running (pid $(pgrep -f F1DockPet | head -1))"
+    echo "note: rebuilding re-signs the app, so macOS may have dropped its"
+    echo "      Accessibility grant. Re-tick F1DockPet in System Settings →"
+    echo "      Privacy & Security → Accessibility if the car stops tracking"
+    echo "      the Dock exactly."
+}
+
 case "${1:-start}" in
   start)   start ;;
   stop)    stop; echo "pet stopped" ;;
   restart) start ;;
+  rebuild) rebuild ;;
   probe)   build; "$BIN" --probe ;;
   sprite)  build; "$BIN" --export-sprite "${2:-/tmp/rb22.png}" ;;
   idle|launch|racing|boost|waiting|victory|spin)

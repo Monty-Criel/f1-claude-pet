@@ -14,7 +14,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBar: MenuBarController?
     private var chat: ChatController?
 
+    // The optional second car: same Dock, parked at the left end, drawn
+    // behind the primary, bound to one chosen session.
+    private var secondWindow: OverlayWindow?
+    private var secondView: TrackView?
+    private var secondChat: ChatController?
+    private var secondSession: Transcript.SessionRef?
+
     func applicationDidFinishLaunching(_ note: Notification) {
+        // Ask for Accessibility once. Without it we can only see the Dock's
+        // height, not its width or which display it is on — so the car has to
+        // fall back to the middle of the screen.
+        DockGeometry.requestAccessibilityIfNeeded()
+
         let dock = DockGeometry.current()
         let frame = trackFrame(for: dock)
 
@@ -47,6 +59,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         trackView.onCarClicked = { chatController.toggle() }
         menuBar?.onReply = { chatController.toggle() }
 
+        // Second car wiring. Its session's tab disappears from the primary
+        // panel — one conversation, one car.
+        chatController.excludedSessionIds = { [weak self] in
+            self?.secondSession.map { Set([$0.id]) } ?? []
+        }
+        menuBar?.onSecondCar = { [weak self] in self?.setSecondCar($0) }
+        menuBar?.currentSecondaryId = { [weak self] in self?.secondSession?.id }
+
+        if let saved = UserDefaults.standard.string(forKey: "secondCarSession"),
+           let ref = Transcript.recentSessions(limit: 10).first(where: { $0.id == saved }) {
+            setSecondCar(ref)
+        }
+
         if let existing = StateChannel.read() { trackView.apply(existing) }
         trackView.start()
     }
@@ -62,8 +87,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func followDock() {
-        let target = trackFrame(for: DockGeometry.current())
-        guard window.frame != target else { return }
-        window.setFrame(target, display: true)
+        let dock = DockGeometry.current()
+
+        // Without an exact measurement the window spans the whole screen and
+        // we cannot know where the Dock actually starts and ends — so keep the
+        // car centred, where a centred Dock always is.
+        trackView.laneAnchor = dock.measured ? .right : .centre
+
+        writeStatus(dock)
+
+        let target = trackFrame(for: dock)
+        if window.frame != target {
+            window.setFrame(target, display: true)
+        }
+
+        // The second car shares the strip but yields the foreground.
+        if let secondWindow, let secondView {
+            secondView.laneAnchor = trackView.laneAnchor
+            if secondWindow.frame != target {
+                secondWindow.setFrame(target, display: true)
+            }
+            secondWindow.order(.below, relativeTo: window.windowNumber)
+        }
+    }
+
+    /// Create, replace or remove the second car.
+    func setSecondCar(_ session: Transcript.SessionRef?) {
+        secondChat?.close(); secondChat = nil
+        secondView?.stop(); secondView = nil
+        secondWindow?.orderOut(nil); secondWindow = nil
+        secondSession = session
+        UserDefaults.standard.set(session?.id, forKey: "secondCarSession")
+        guard let session else { return }
+
+        let w = OverlayWindow(contentRect: window.frame)
+        let v = TrackView(frame: CGRect(origin: .zero, size: window.frame.size))
+        v.autoresizingMask = [.width, .height]
+        v.laneAnchor = trackView.laneAnchor
+        v.pitHome = .left
+        // A different livery from the primary, so the two are tellable apart.
+        if let alt = CarRegistry.all.first(where: { $0.id != trackView.car.id }) { v.car = alt }
+        w.contentView = v
+        // Slightly ghosted: this is the background car.
+        w.alphaValue = 0.92
+        w.orderFrontRegardless()
+        w.order(.below, relativeTo: window.windowNumber)
+        // Start it in the pit box at its own end, so it is immediately
+        // obvious where the second car lives.
+        v.apply(.waiting)
+
+        let panelChat = ChatController(trackView: v)
+        panelChat.fixedSession = session
+        v.onCarClicked = { panelChat.toggle() }
+        v.showInfo(session.title.isEmpty ? session.project : session.title)
+        v.start()
+
+        secondWindow = w
+        secondView = v
+        secondChat = panelChat
+    }
+
+    /// Report what the *running* app can see, for diagnosis.
+    ///
+    /// The CLI binary and the bundled app have different Accessibility grants,
+    /// so `--probe` from a terminal does not tell you what the pet itself is
+    /// working with. This does.
+    private func writeStatus(_ dock: DockFrame) {
+        let status = """
+        accessibility: \(DockGeometry.isTrusted)
+        measured:      \(dock.measured)
+        dockRect:      \(dock.rect)
+        screen:        \(dock.screen.frame)
+        laneAnchor:    \(dock.measured ? "right" : "centre")
+        window:        \(window.frame)
+        """
+        try? FileManager.default.createDirectory(at: StateChannel.directory,
+                                                 withIntermediateDirectories: true)
+        try? status.write(to: StateChannel.directory.appendingPathComponent("status"),
+                          atomically: true, encoding: .utf8)
     }
 }

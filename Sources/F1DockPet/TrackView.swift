@@ -9,7 +9,7 @@ import AppKit
 final class TrackView: NSView {
 
     // Touched from deinit, which is not main-actor isolated.
-    private nonisolated(unsafe) var displayLink: CVDisplayLink?
+    private nonisolated(unsafe) var displayLink: CADisplayLink?
 
     /// Swappable at runtime from the menu bar.
     var car: any Car = CarRegistry.selected {
@@ -74,6 +74,9 @@ final class TrackView: NSView {
     private var engineFire: CGFloat = 0
     /// 0…1 spark intensity while sat on the line at lights out.
     private var launchSparks: CGFloat = 0
+    /// Seconds left of the hard launch off the line — faster and harder
+    /// accelerating than an ordinary tool-fired boost.
+    private var launchBurst: CGFloat = 0
     /// Rotation about the car's *vertical* axis, for the celebratory donut.
     /// In side view this foreshortens the car to edge-on and back, rather than
     /// cartwheeling it end over end.
@@ -93,6 +96,10 @@ final class TrackView: NSView {
         didSet { needsDisplay = true }
     }
 
+    /// True while the chat panel is open. The car parks and stays put — a
+    /// panel pinned to a moving car is unreadable, and you came to read it.
+    var isChatOpen = false
+
     override var isFlipped: Bool { false }
 
     // MARK: - geometry
@@ -101,16 +108,56 @@ final class TrackView: NSView {
         CGSize(width: car.pixelSize.width * scale, height: car.pixelSize.height * scale)
     }
 
+    /// Where the car's lane sits within the window.
+    ///
+    /// With Accessibility granted the window *is* the Dock strip, so hugging
+    /// its right end keeps the car on the Dock. Without it we only know the
+    /// Dock's height, not its width, and the window spans the whole screen —
+    /// so anchoring right would put the car past the end of the Dock. The Dock
+    /// is always centred, so centring is the safe choice there.
+    enum LaneAnchor { case right, centre }
+    var laneAnchor: LaneAnchor = .right
+
     /// The stretch of Dock the car may use — its corner normally, the whole
-    /// Dock while it is out on a full lap.
+    /// window while it is out on a full lap.
     private var lane: (minX: CGFloat, maxX: CGFloat) {
-        if lapMode == .full { return (bounds.minX, bounds.maxX) }
-        let width = bounds.width * laneFraction
-        return (bounds.maxX - width, bounds.maxX)
+        switch laneAnchor {
+        case .right:
+            // The window *is* the Dock strip, so the whole of it is fair game.
+            if lapMode == .full { return (bounds.minX, bounds.maxX) }
+            let width = bounds.width * laneFraction
+            return (bounds.maxX - width, bounds.maxX)
+
+        case .centre:
+            // The window is the whole screen and we cannot see where the Dock
+            // begins or ends, so stay well inside it — a "full lap" here has to
+            // be a centred band, or the car drives off the end of the Dock.
+            let width = bounds.width * (lapMode == .full ? 0.5 : laneFraction)
+            let mid = bounds.midX
+            return (mid - width / 2, mid + width / 2)
+
+        }
     }
 
-    /// Where the car parks when it is called in.
-    private var pitBoxX: CGFloat { bounds.maxX - carSize.width - 8 }
+    /// Where the car parks when it is called in: the right-hand end of
+    /// whichever lane it is using.
+    private var pitBoxX: CGFloat {
+        let width = bounds.width * laneFraction
+        switch (pitHome, laneAnchor) {
+        case (.right, .right):  return bounds.maxX - carSize.width - 6
+        case (.right, .centre): return bounds.midX + width / 2 - carSize.width - 8
+        case (.left, .right):   return bounds.minX + 6
+        case (.left, .centre):  return bounds.midX - width / 2 + 8
+        }
+    }
+
+    /// Which end of the Dock this car calls home. The primary lives on the
+    /// right; the second car pits at the left end, so the two never fight over
+    /// the same box even though both may use the full Dock when moving.
+    enum PitHome { case right, left }
+    var pitHome: PitHome = .right
+
+
 
     /// Where the car is actually painted, including the burnout shimmy.
     private var drawX: CGFloat { x + wiggle }
@@ -122,6 +169,27 @@ final class TrackView: NSView {
 
     /// What the car is doing right now — the chat panel gates on this.
     var currentState: PetState { state }
+
+    /// Persistent caption for a car that represents a session rather than the
+    /// live one — the second car wears its session's name as its bubble.
+    func showInfo(_ text: String?) {
+        infoCaption = text.map { Self.truncate($0) }
+        bubbleText = infoCaption
+        needsDisplay = true
+    }
+
+    /// A caption this car always falls back to — the session it represents.
+    /// Set for the second car, and used by the primary once it goes idle so
+    /// the Dock always tells you which conversation you are looking at.
+    private var infoCaption: String?
+
+    /// The car's rect in screen coordinates, so the chat panel can ride above
+    /// it as it moves.
+    var carScreenRect: CGRect? {
+        guard let window else { return nil }
+        return window.convertToScreen(CGRect(x: drawX, y: idleShake,
+                                             width: carSize.width, height: carSize.height))
+    }
 
     /// The only part of the window that accepts clicks, padded a little so a
     /// moving target stays catchable.
@@ -145,6 +213,14 @@ final class TrackView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         guard carHitBox.contains(point) else { return }
         onCarClicked?()
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard carHitBox.contains(point) else { return }
+        // Right-click is the pit board: call the car in — BOX BOX — and a
+        // second right-click releases it back to work.
+        apply(state == .waiting ? .idle : .waiting)
     }
 
     /// Contact patch of a tyre, in view coordinates, accounting for facing.
@@ -188,31 +264,30 @@ final class TrackView: NSView {
     }
 
     func start() {
-        var link: CVDisplayLink?
-        CVDisplayLinkCreateWithActiveCGDisplays(&link)
-        guard let link else { return }
+        // NSView's display link is main-actor bound and follows whichever
+        // screen the view is actually on — which matters when the Dock, and
+        // therefore this window, moves between monitors.
+        let link = displayLink(target: self, selector: #selector(tick))
+        link.add(to: .main, forMode: .common)
         displayLink = link
-
-        CVDisplayLinkSetOutputHandler(link) { [weak self] _, _, _, _, _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.step() } }
-            return kCVReturnSuccess
-        }
-        CVDisplayLinkStart(link)
     }
 
     func stop() {
-        if let displayLink { CVDisplayLinkStop(displayLink) }
+        displayLink?.invalidate()
         displayLink = nil
     }
 
     deinit {
-        if let displayLink { CVDisplayLinkStop(displayLink) }
+        displayLink?.invalidate()
     }
+
+    @objc private func tick() { step() }
 
     // MARK: - state
 
-    /// Longest caption the bubble can show before it starts eating the Dock.
-    private static let maxBubbleLength = 28
+    /// Longest caption the bubble can show. The bubble wraps to three lines,
+    /// so this is generous — it only guards against a whole paragraph.
+    private static let maxBubbleLength = 120
 
     /// `Stop` fires at the end of every response, so celebrate sparingly.
     private static let victoryCooldown: CFTimeInterval = 60
@@ -235,7 +310,7 @@ final class TrackView: NSView {
 
     func apply(_ new: PetState, message: String? = nil) {
         let now = CACurrentMediaTime()
-        let caption = message.map(Self.truncate)
+        let caption = message.map { Self.truncate($0) }
 
         // Let the celebration play out, then pick up whatever arrived. Only
         // a breakdown is allowed to interrupt — that is genuinely urgent.
@@ -282,10 +357,13 @@ final class TrackView: NSView {
         // Any new event repairs the car.
         if new != .spin { puncture = 0; engineFire = 0 }
         if new != .launch { launchSparks = 0 }
+        if new != .racing { launchBurst = 0 }
 
         switch new {
         case .idle:
-            bubbleText = caption
+            // Nothing left to do: fall back to naming the session, so the
+            // Dock always says which conversation this car belongs to.
+            bubbleText = caption ?? infoCaption ?? Self.liveSessionName()
             lapMode = .shortLane
         case .launch:
             bubbleText = caption ?? "LIGHTS OUT"
@@ -295,7 +373,8 @@ final class TrackView: NSView {
             bubbleText = caption ?? "BOX BOX"
             lapMode = .shortLane
         case .victory:
-            bubbleText = caption ?? "P1 \u{1F3C1}"
+            // Prefer what Claude actually said over a canned "P1".
+            bubbleText = caption ?? Self.finishedMessage() ?? "P1 \u{1F3C1}"
             bigSmokeRemaining = livelyMode ? 2.6 : 1.0
             bigSmokeBillow = livelyMode ? 2.4 : 1.6
         case .spin:
@@ -306,12 +385,38 @@ final class TrackView: NSView {
         needsDisplay = true
     }
 
+    /// The session the hooks are watching, by name — the resting caption.
+    private static func liveSessionName() -> String? {
+        guard let (id, cwd) = StateChannel.readSession() else { return nil }
+        if let title = StateChannel.readSessionTitle(id: id, cwd: cwd), !title.isEmpty {
+            return truncate(title)
+        }
+        return truncate((cwd as NSString).lastPathComponent)
+    }
+
+    /// What to show when a job finishes: the first line of Claude's closing
+    /// message, with a count of the steps it took to get there.
+    private static func finishedMessage() -> String? {
+        guard let (id, cwd) = StateChannel.readSession() else { return nil }
+
+        let steps = Transcript.recentTools(id: id, cwd: cwd, limit: 20).count
+        guard let said = Transcript.lastAssistantText(id: id, cwd: cwd) else {
+            return steps > 0 ? "\u{1F3C1} done · \(steps) steps" : nil
+        }
+
+        // First sentence or line, whichever comes first.
+        let firstLine = said.components(separatedBy: "\n").first ?? said
+        let sentence = firstLine.components(separatedBy: ". ").first ?? firstLine
+        let stepTag = steps > 0 ? "  ·  \(steps) steps" : ""
+        return "\u{1F3C1} " + truncate(sentence, to: 100) + stepTag
+    }
+
     /// Clip a caption to something that fits above the car.
-    private static func truncate(_ text: String) -> String {
+    private static func truncate(_ text: String, to limit: Int = maxBubbleLength) -> String {
         let clean = text.replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespaces)
-        guard clean.count > maxBubbleLength else { return clean }
-        return clean.prefix(maxBubbleLength - 1) + "\u{2026}"
+        guard clean.count > limit else { return clean }
+        return clean.prefix(limit - 1) + "\u{2026}"
     }
 
     // MARK: - loop
@@ -326,6 +431,7 @@ final class TrackView: NSView {
 
         boostRemaining = max(0, boostRemaining - dtf)
         bigSmokeRemaining = max(0, bigSmokeRemaining - dtf)
+        launchBurst = max(0, launchBurst - dtf)
 
         drive(dt: dtf)
 
@@ -341,9 +447,23 @@ final class TrackView: NSView {
         // accompanies an actual event, otherwise the pet would smoke all day.
         let billow: CGFloat = bigSmokeRemaining > 0 ? bigSmokeBillow : 1
         if tyreSpin > 0.02 && (livelyMode || bigSmokeRemaining > 0 || state == .launch || state == .spin) {
-            smoke.emit(at: rearContactPoint,
+            var smokeOrigin = rearContactPoint
+            var throwDir = -direction
+
+            // Mid-donut the rear tyre isn't at the back of the sprite — it's
+            // orbiting the car. Sweep the emission point with the yaw and
+            // throw the smoke tangentially, so the cloud forms a ring around
+            // the car instead of pouring out of one fixed spot.
+            if state == .victory && yawAngle != 0 {
+                let centreX = drawX + carSize.width / 2
+                let sweep = cos(yawAngle) * carSize.width * 0.38
+                smokeOrigin = CGPoint(x: centreX + sweep, y: 2)
+                throwDir = sin(yawAngle) > 0 ? -1 : 1
+            }
+
+            smoke.emit(at: smokeOrigin,
                        intensity: tyreSpin,
-                       backwards: -direction,
+                       backwards: throwDir,
                        dt: dtf,
                        billow: billow)
         }
@@ -392,6 +512,20 @@ final class TrackView: NSView {
         let topSpeed: CGFloat = livelyMode ? 250 : 140
         let lane = self.lane
 
+        // Reading the chat beats watching the car: stop dead, exactly where it
+        // is, so the pinned panel stops moving the instant you open it. State
+        // still advances underneath, so the lights and bubble stay live.
+        if isChatOpen {
+            velocity = 0
+            tyreSpin = 0
+            isBraking = false
+            wiggle = 0
+            yawAngle = 0
+            idleShake = 0
+            revs = 0.2
+            return
+        }
+
         switch state {
         case .idle:
             velocity += (0 - velocity) * min(1, 4 * dt)
@@ -419,11 +553,13 @@ final class TrackView: NSView {
                 if livelyMode { startFullLap() }
                 apply(.racing)
                 if livelyMode {
-                    // Zoom off: leave the line already moving, with a burst
-                    // of extra top speed on tap.
+                    // Zoom off: fire off the line genuinely quickly, with a
+                    // long burst of extra top speed on tap. This is the one
+                    // moment the car is *meant* to look fast.
                     direction = lapMode == .full ? -1 : direction
-                    velocity = 260
-                    boostRemaining = 0.9
+                    velocity = 520
+                    boostRemaining = 1.8
+                    launchBurst = 1.4
                 }
             }
 
@@ -454,10 +590,13 @@ final class TrackView: NSView {
                 return
             }
 
-            let ceiling = boostRemaining > 0 ? topSpeed * 1.6 : topSpeed
+            // A launch burst raises the ceiling well beyond a normal boost
+            // and lets the car accelerate hard out of the box.
+            let boostFactor: CGFloat = launchBurst > 0 ? 2.6 : (boostRemaining > 0 ? 1.6 : 1)
+            let ceiling = topSpeed * boostFactor
             // Gentler than a real car would manage: sharp acceleration and
             // late braking are exactly what catches the eye.
-            let accel: CGFloat = livelyMode ? 380 : 210
+            let accel: CGFloat = launchBurst > 0 ? 1400 : (livelyMode ? 380 : 210)
             let brake: CGFloat = livelyMode ? 620 : 300
 
             let distanceToEnd = direction > 0
@@ -536,12 +675,22 @@ final class TrackView: NSView {
             tyreSpin = 1
             wiggle = sin(CGFloat(stateAge) * 14) * 1.5
             if stateAge < 2.6 {
-                yawAngle += 7.5 * dt       // a bit over one turn per second
+                // Eased, not constant: the car has to break traction and wind
+                // the spin up, and it runs out of momentum at the end.
+                let t = CGFloat(stateAge)
+                let windUp = min(1, t / 0.45)
+                let windDown = min(1, max(0, (2.6 - t) / 0.5))
+                let rate = 8.5 * windUp * windUp * (0.3 + 0.7 * windDown)
+                yawAngle += rate * dt
+                // Weight rocking over the outside tyres, twice per revolution.
+                idleShake = sin(yawAngle * 2) * 0.7
             } else {
-                // Donut done: sit still for a beat before doing anything else.
+                // Donut done: roll back to the pit box at the far right and
+                // stop there, so the car is parked where the chat panel opens
+                // rather than stranded mid-Dock.
                 yawAngle = 0
                 tyreSpin = 0
-                velocity = 0
+                coastTo(pitBoxX, dt: dt)
                 if stateAge > Self.victoryHold {
                     if let (next, message) = pendingState {
                         pendingState = nil
@@ -593,9 +742,8 @@ final class TrackView: NSView {
         if abs(gap) < 1.5 {
             x = target
             velocity = 0
-            // Park facing back down the Dock rather than nose-first into the
-            // screen edge — and it puts the rear light where you can see it.
-            direction = -1
+            // Park facing back down the Dock, not nose-first into the edge.
+            direction = pitHome == .right ? -1 : 1
             return
         }
         direction = gap > 0 ? 1 : -1
@@ -636,7 +784,14 @@ final class TrackView: NSView {
             // squashes horizontally: cos goes to 0 edge-on, then negative,
             // which flips the sprite so the car comes round facing the other
             // way. Far more convincing than rotating the sprite in-plane.
-            let squash = cos(yawAngle)
+            //
+            // Clamped away from zero — at exactly edge-on the car would vanish
+            // for a frame, which reads as flicker rather than rotation.
+            var squash = cos(yawAngle)
+            let minSquash: CGFloat = 0.14
+            if abs(squash) < minSquash {
+                squash = squash < 0 ? -minSquash : minSquash
+            }
             ctx.saveGState()
             ctx.translateBy(x: rect.midX, y: rect.midY)
             ctx.scaleBy(x: squash, y: 1)
@@ -723,19 +878,33 @@ final class TrackView: NSView {
         ctx.setShouldAntialias(false)
     }
 
-    /// Pit-wall radio call, floating above the car.
+    /// Pit-wall radio call, floating above the car. Wraps to at most three
+    /// lines so a real sentence from Claude fits without becoming a banner.
     private func drawBubble(_ text: String, alpha: CGFloat) {
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .bold)
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        paragraph.lineSpacing = 1
+
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor.white.withAlphaComponent(alpha),
+            .paragraphStyle: paragraph,
         ]
         let string = NSAttributedString(string: text, attributes: attrs)
-        let textSize = string.size()
 
-        let padding: CGFloat = 7
-        let boxW = textSize.width + padding * 2
-        let boxH = textSize.height + padding
+        // Measure with a wrap width, then cap the height at three lines.
+        let maxWidth = min(bounds.width - 24, 320)
+        let lineHeight = font.boundingRectForFont.height + paragraph.lineSpacing
+        let measured = string.boundingRect(with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
+                                           options: [.usesLineFragmentOrigin, .usesFontLeading])
+        let textW = min(ceil(measured.width), maxWidth)
+        let textH = min(ceil(measured.height), ceil(lineHeight * 3))
+
+        let padding: CGFloat = 8
+        let boxW = textW + padding * 2
+        let boxH = textH + padding * 1.4
         var boxX = drawX + carSize.width / 2 - boxW / 2
         boxX = max(bounds.minX + 2, min(boxX, bounds.maxX - boxW - 2))
         let boxY = carSize.height + 8
@@ -756,6 +925,8 @@ final class TrackView: NSView {
         ctx.addPath(tail)
         ctx.fillPath()
 
-        string.draw(at: CGPoint(x: box.minX + padding, y: box.minY + padding / 2))
+        string.draw(with: CGRect(x: box.minX + padding, y: box.minY + padding * 0.7,
+                                 width: textW, height: textH),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading])
     }
 }

@@ -19,6 +19,20 @@ enum PetState: String, CaseIterable {
     case boost
 
     var isBurningOut: Bool { self == .launch || self == .victory }
+
+    /// One line describing what the car does — shown under each menu item and
+    /// used by `--notify --help`.
+    var summary: String {
+        switch self {
+        case .idle:    return "Parked in the pit box, engine ticking over"
+        case .launch:  return "Lights out — burnout on the line, then away"
+        case .racing:  return "Working: wheels turning, laps in lively mode"
+        case .waiting: return "Pits and flashes its rain light for you"
+        case .victory: return "Job done — donut and smoke, then parks"
+        case .spin:    return "Failure — stops, blows a tyre, catches fire"
+        case .boost:   return "A tool just ran — burst of speed and smoke"
+        }
+    }
 }
 
 /// One-way channel from Claude Code hooks into the running pet.

@@ -6,8 +6,8 @@ final class ChatPanel: NSPanel {
     override func cancelOperation(_ sender: Any?) { orderOut(nil) }
 }
 
-/// The pit-wall radio: a small panel above the car that resumes the last
-/// Claude Code session the hooks reported.
+/// The pit-wall radio: a panel above the car showing the live conversation and
+/// letting you reply into the last Claude Code session the hooks reported.
 ///
 /// Two properties worth knowing:
 ///  * It talks to the *real* session (`claude -r <id> -p`), not a fork — so it
@@ -16,18 +16,53 @@ final class ChatPanel: NSPanel {
 ///  * Unlike everything else in this app, sending a message here costs tokens,
 ///    exactly like typing the same thing into Claude Code.
 @MainActor
-final class ChatController: NSObject, NSTextFieldDelegate {
+final class ChatController: NSObject {
 
     private let panel: ChatPanel
     private let transcript = NSTextView()
     private let scroll = NSScrollView()
     private let input = NSTextField()
     private let header = NSTextField(labelWithString: "PIT WALL")
+    private let subheader = NSTextField(labelWithString: "")
+    private let statusDot = NSView()
+    private var lamps: [NSView] = []
+
+    private let pinButton = NSButton()
+    private let closeButton = NSButton()
+
     private weak var trackView: TrackView?
     private var running = false
+    private var refresh: Timer?
+    private var follow: Timer?
+    /// What is currently on screen, so identical refreshes are skipped.
+    private var lastRendered = ""
 
-    private static let width: CGFloat = 420
-    private static let height: CGFloat = 250
+    /// The three most recently active sessions, and which one is showing.
+    private var sessions: [Transcript.SessionRef] = []
+    private var selected: Transcript.SessionRef?
+    private let tabBar = NSView()
+
+    /// A panel dedicated to one session (the second car's). No tabs, no
+    /// following the hooks — it is that conversation, permanently.
+    var fixedSession: Transcript.SessionRef?
+
+    /// Sessions owned by another car, hidden from this panel's tabs.
+    var excludedSessionIds: () -> Set<String> = { [] }
+
+    /// Pinned panels ride above the car; unpinned ones stay where you drop them.
+    private var isPinned: Bool {
+        get { UserDefaults.standard.object(forKey: "chatPinned") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "chatPinned") }
+    }
+
+    private static let width: CGFloat = 460
+    private static let height: CGFloat = 340
+
+    // Team colours, lifted from the car that is currently driving.
+    private var accent: NSColor {
+        (trackView?.car as? (any GT3Model))?.livery.accent
+            ?? NSColor(srgbRed: 1.0, green: 0.82, blue: 0.0, alpha: 1)
+    }
 
     init(trackView: TrackView) {
         self.trackView = trackView
@@ -38,6 +73,8 @@ final class ChatController: NSObject, NSTextFieldDelegate {
         buildUI()
     }
 
+    // MARK: - chrome
+
     private func buildUI() {
         panel.level = OverlayWindow.petLevel + 2
         panel.isOpaque = false
@@ -47,89 +84,410 @@ final class ChatController: NSObject, NSTextFieldDelegate {
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.appearance = NSAppearance(named: .darkAqua)
 
         let content = NSView(frame: CGRect(x: 0, y: 0, width: Self.width, height: Self.height))
         content.wantsLayer = true
-        content.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.86).cgColor
-        content.layer?.cornerRadius = 12
+        content.layer?.backgroundColor = NSColor(srgbRed: 0.05, green: 0.06, blue: 0.08, alpha: 0.95).cgColor
+        content.layer?.cornerRadius = 14
+        content.layer?.borderWidth = 1
+        content.layer?.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
 
-        // Transcript.
-        let inset: CGFloat = 10
-        scroll.frame = CGRect(x: inset, y: 46, width: Self.width - inset * 2,
-                              height: Self.height - 46 - inset - 18)
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        transcript.frame = scroll.bounds
-        transcript.isEditable = false
-        transcript.drawsBackground = false
-        transcript.textColor = .white
-        transcript.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        transcript.autoresizingMask = [.width]
-        scroll.documentView = transcript
-        content.addSubview(scroll)
+        let inset: CGFloat = 12
 
-        // Title strip — shows the live session name.
-        header.frame = CGRect(x: inset, y: Self.height - 24, width: Self.width - inset * 2, height: 16)
-        header.font = .monospacedSystemFont(ofSize: 10, weight: .bold)
-        header.textColor = NSColor.white.withAlphaComponent(0.55)
+        // Header band — carries the team colour so the panel matches the car.
+        let band = NSView(frame: CGRect(x: 0, y: Self.height - 44, width: Self.width, height: 44))
+        band.wantsLayer = true
+        band.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.05).cgColor
+        content.addSubview(band)
+
+        let stripe = NSView(frame: CGRect(x: 0, y: Self.height - 46, width: Self.width, height: 2))
+        stripe.wantsLayer = true
+        content.addSubview(stripe)
+        self.stripe = stripe
+
+        // Marshalling lights: green / yellow / red, read left to right like a
+        // trackside panel. Exactly one is lit at a time; the others sit dark.
+        statusDot.frame = CGRect(x: inset, y: Self.height - 26, width: 34, height: 12)
+        statusDot.wantsLayer = true
+        statusDot.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        statusDot.layer?.cornerRadius = 3
+        for i in 0..<3 {
+            let lamp = NSView(frame: CGRect(x: 3 + CGFloat(i) * 11, y: 2, width: 8, height: 8))
+            lamp.wantsLayer = true
+            lamp.layer?.cornerRadius = 4
+            statusDot.addSubview(lamp)
+            lamps.append(lamp)
+        }
+        content.addSubview(statusDot)
+
+        header.frame = CGRect(x: inset + 42, y: Self.height - 25, width: Self.width - inset * 2 - 100, height: 15)
+        header.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
+        header.textColor = .white
         header.lineBreakMode = .byTruncatingTail
         content.addSubview(header)
 
+        // Pin / unpin and close, top right of the header band.
+        closeButton.frame = CGRect(x: Self.width - inset - 20, y: Self.height - 30, width: 20, height: 20)
+        closeButton.isBordered = false
+        closeButton.bezelStyle = .accessoryBarAction
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")
+        closeButton.contentTintColor = NSColor.white.withAlphaComponent(0.5)
+        closeButton.target = self
+        closeButton.action = #selector(closeClicked)
+        content.addSubview(closeButton)
+
+        pinButton.frame = CGRect(x: Self.width - inset - 46, y: Self.height - 30, width: 20, height: 20)
+        pinButton.isBordered = false
+        pinButton.bezelStyle = .accessoryBarAction
+        pinButton.target = self
+        pinButton.action = #selector(togglePin)
+        content.addSubview(pinButton)
+
+        subheader.frame = CGRect(x: inset + 42, y: Self.height - 40, width: Self.width - inset * 2 - 100, height: 13)
+        subheader.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
+        subheader.textColor = NSColor.white.withAlphaComponent(0.45)
+        subheader.lineBreakMode = .byTruncatingTail
+        content.addSubview(subheader)
+
+        // Session switcher: the three most recently active conversations.
+        tabBar.frame = CGRect(x: inset, y: Self.height - 72, width: Self.width - inset * 2, height: 22)
+        content.addSubview(tabBar)
+
+        // Conversation.
+        scroll.frame = CGRect(x: inset, y: 48, width: Self.width - inset * 2,
+                              height: Self.height - 48 - 78)
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.autohidesScrollers = true
+
+        // A hand-built NSTextView needs this whole incantation to behave in a
+        // scroll view. Without `isVerticallyResizable` it keeps the fixed frame
+        // it was given, so text lays out from the bottom of that frame upwards
+        // and every new message appears to shove the view around.
+        transcript.frame = CGRect(origin: .zero, size: scroll.contentSize)
+        transcript.minSize = NSSize(width: 0, height: 0)
+        transcript.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                    height: CGFloat.greatestFiniteMagnitude)
+        transcript.isVerticallyResizable = true
+        transcript.isHorizontallyResizable = false
+        transcript.autoresizingMask = [.width]
+        transcript.textContainer?.containerSize = NSSize(width: scroll.contentSize.width,
+                                                         height: CGFloat.greatestFiniteMagnitude)
+        transcript.textContainer?.widthTracksTextView = true
+        transcript.isEditable = false
+        transcript.isSelectable = true
+        transcript.drawsBackground = false
+        transcript.textContainerInset = NSSize(width: 2, height: 4)
+
+        scroll.documentView = transcript
+        content.addSubview(scroll)
+
         // Input.
-        input.frame = CGRect(x: inset, y: inset, width: Self.width - inset * 2, height: 26)
-        input.placeholderString = "Message Claude… (Enter to send, Esc to close)"
+        input.frame = CGRect(x: inset, y: 12, width: Self.width - inset * 2, height: 28)
+        input.placeholderString = "Message Claude…  ⏎ send   esc close"
         input.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         input.bezelStyle = .roundedBezel
+        input.focusRingType = .none
         input.target = self
         input.action = #selector(send)
         content.addSubview(input)
 
         panel.contentView = content
-        panel.appearance = NSAppearance(named: .darkAqua)
     }
+
+    private var stripe: NSView?
 
     // MARK: - open / close
 
-    func toggle() {
-        panel.isVisible ? close() : open()
+    func toggle() { panel.isVisible ? close() : open() }
+
+    func close() {
+        refresh?.invalidate(); refresh = nil
+        follow?.invalidate(); follow = nil
+        trackView?.isChatOpen = false
+        panel.orderOut(nil)
     }
 
-    func close() { panel.orderOut(nil) }
-
     private func open() {
-        // Sit just above the car's window, hugging the right edge.
-        if let overlay = trackView?.window {
-            let f = overlay.frame
-            panel.setFrameOrigin(CGPoint(x: f.maxX - Self.width - 16, y: f.maxY + 6))
+        // Park the car while you read — a panel pinned to a moving car is
+        // unreadable.
+        trackView?.isChatOpen = true
+        if let fixed = fixedSession {
+            sessions = [fixed]
+            selected = fixed
+        } else {
+            let excluded = excludedSessionIds()
+            sessions = Array(Transcript.recentSessions(limit: 3 + excluded.count)
+                .filter { !excluded.contains($0.id) }
+                .prefix(3))
+            selected = sessions.first { $0.id == StateChannel.readSession()?.id } ?? sessions.first
         }
-        header.stringValue = headerText()
-        if transcript.string.isEmpty {
-            appendSystem(sessionSummary())
-        }
+        rebuildTabs()
+        applyPinState()
+        stripe?.layer?.backgroundColor = accent.cgColor
+        reload()
+
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         panel.makeFirstResponder(input)
+
+        // Follow the session while the panel is open.
+        refresh = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reload(preserveScroll: true) }
+        }
+        // Ride above the car. 20Hz is plenty — the car is usually parked, and
+        // this only runs while the panel is actually open.
+        follow = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.followCar() }
+        }
     }
 
-    private func sessionSummary() -> String {
-        guard let (id, cwd) = StateChannel.readSession() else {
-            return "No Claude Code session seen yet — the hooks report one as soon as you use Claude Code."
+    // MARK: - anchoring
+
+    /// One button per recent session, laid out evenly.
+    private func rebuildTabs() {
+        tabBar.subviews.forEach { $0.removeFromSuperview() }
+        guard sessions.count > 1 else { return }   // no point switching between one
+
+        let gap: CGFloat = 6
+        let width = (tabBar.bounds.width - gap * CGFloat(sessions.count - 1)) / CGFloat(sessions.count)
+
+        for (index, session) in sessions.enumerated() {
+            let isCurrent = session.id == selected?.id
+            let button = NSButton(frame: CGRect(x: (width + gap) * CGFloat(index), y: 0,
+                                                width: width, height: 22))
+            button.isBordered = false
+            button.wantsLayer = true
+            button.layer?.cornerRadius = 5
+            button.layer?.backgroundColor = isCurrent
+                ? accent.withAlphaComponent(0.22).cgColor
+                : NSColor.white.withAlphaComponent(0.05).cgColor
+            button.layer?.borderWidth = isCurrent ? 1 : 0
+            button.layer?.borderColor = accent.withAlphaComponent(0.55).cgColor
+
+            button.attributedTitle = NSAttributedString(string: session.label, attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 9, weight: isCurrent ? .bold : .regular),
+                .foregroundColor: isCurrent ? NSColor.white : NSColor.white.withAlphaComponent(0.55),
+            ])
+            button.toolTip = "\(session.title.isEmpty ? "(untitled)" : session.title)\n\(session.cwd)"
+            button.tag = index
+            button.target = self
+            button.action = #selector(selectSession(_:))
+            tabBar.addSubview(button)
         }
-        let project = (cwd as NSString).lastPathComponent
-        if let title = StateChannel.readSessionTitle(id: id, cwd: cwd) {
-            return "\u{201C}\(title)\u{201D}\n\(project) · \(id.prefix(8))…"
-        }
-        return "\(project) · \(id.prefix(8))…"
     }
 
-    /// Session title for the panel's header strip, refreshed each time it opens
-    /// — Claude Code renames sessions as they develop.
-    private func headerText() -> String {
-        guard let (id, cwd) = StateChannel.readSession(),
-              let title = StateChannel.readSessionTitle(id: id, cwd: cwd) else {
-            return "PIT WALL — reply to last session"
+    @objc private func selectSession(_ sender: NSButton) {
+        guard sessions.indices.contains(sender.tag) else { return }
+        selected = sessions[sender.tag]
+        lastRendered = ""          // force a redraw of the new conversation
+        rebuildTabs()
+        reload()
+    }
+
+    @objc private func togglePin() {
+        isPinned.toggle()
+        applyPinState()
+    }
+
+    @objc private func closeClicked() { close() }
+
+    private func applyPinState() {
+        let pinned = isPinned
+        pinButton.image = NSImage(systemSymbolName: pinned ? "pin.fill" : "pin.slash",
+                                  accessibilityDescription: pinned ? "Unpin" : "Pin to car")
+        pinButton.contentTintColor = pinned ? accent : NSColor.white.withAlphaComponent(0.45)
+        pinButton.toolTip = pinned
+            ? "Pinned to the car — click to move it freely"
+            : "Free — click to pin it back above the car"
+
+        // Dragging is only allowed when unpinned; otherwise the panel would
+        // fight the car for position every frame.
+        panel.isMovableByWindowBackground = !pinned
+
+        if pinned { followCar(force: true) }
+    }
+
+    /// Keep the panel sitting just above the car, clamped on screen.
+    private func followCar(force: Bool = false) {
+        guard isPinned, force || panel.isVisible else { return }
+        guard let car = trackView?.carScreenRect else { return }
+
+        let screen = trackView?.window?.screen ?? NSScreen.main
+        let bounds = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+
+        // Right-align to the car rather than centring: the panel then reads as
+        // hanging off the car, and its edge lines up with the rear wing when
+        // the car is facing left — which is how it parks.
+        var x = car.maxX - Self.width + 18
+        var y = car.maxY + 12
+        x = max(bounds.minX + 8, min(x, bounds.maxX - Self.width - 8))
+        y = min(y, bounds.maxY - Self.height - 8)
+
+        let origin = CGPoint(x: x.rounded(), y: y.rounded())
+        if force || panel.frame.origin != origin {
+            panel.setFrameOrigin(origin)
         }
-        return "PIT WALL — " + title.uppercased()
+    }
+
+    // MARK: - content
+
+    /// The session the panel is showing: whichever tab is selected, falling
+    /// back to whatever the hooks last reported.
+    private var activeSession: (id: String, cwd: String)? {
+        if let selected { return (selected.id, selected.cwd) }
+        return StateChannel.readSession()
+    }
+
+    private func reload(preserveScroll: Bool = false) {
+        // A send in flight has an optimistic echo on screen that is not in the
+        // transcript yet; rebuilding now would delete it under the user.
+        if running && preserveScroll { return }
+
+        guard let (id, cwd) = activeSession else {
+            header.stringValue = "PIT WALL"
+            subheader.stringValue = "no session yet"
+            updateLamps(for: .idle)
+            setBody(preserveScroll: preserveScroll, NSAttributedString(
+                string: "No Claude Code session seen yet.\n\nThe hooks register one the moment you use Claude Code — then this panel shows the conversation and you can reply from here.",
+                attributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                             .foregroundColor: NSColor.white.withAlphaComponent(0.5)]))
+            return
+        }
+
+        let title = StateChannel.readSessionTitle(id: id, cwd: cwd)
+        header.stringValue = title ?? "PIT WALL"
+        subheader.stringValue = "\((cwd as NSString).lastPathComponent) · \(id.prefix(8))…"
+
+        let state = trackView?.currentState ?? .idle
+        updateLamps(for: state)
+
+        setBody(preserveScroll: preserveScroll, render(Transcript.recent(id: id, cwd: cwd, limit: 40)))
+    }
+
+    /// Which marshalling light is showing.
+    ///
+    /// Trackside meaning, not decoration: green = running, yellow = needs you,
+    /// red = stopped. "Done" is green too — the session is healthy and the work
+    /// finished — while idle leaves the whole panel dark, like an unused board.
+    private enum Lamp: Int { case green = 0, yellow = 1, red = 2, none = -1 }
+
+    private func lamp(for state: PetState) -> Lamp {
+        switch state {
+        case .racing, .launch, .boost: return .green    // working
+        case .victory:                 return .green    // done, all well
+        case .waiting:                 return .yellow   // waiting on you
+        case .spin:                    return .red      // failed
+        case .idle:                    return .none     // board dark
+        }
+    }
+
+    private func updateLamps(for state: PetState) {
+        let lit = lamp(for: state)
+        let colors: [NSColor] = [
+            NSColor(srgbRed: 0.10, green: 0.85, blue: 0.25, alpha: 1),
+            NSColor(srgbRed: 1.00, green: 0.78, blue: 0.05, alpha: 1),
+            NSColor(srgbRed: 1.00, green: 0.20, blue: 0.15, alpha: 1),
+        ]
+        for (index, lampView) in lamps.enumerated() {
+            let isLit = index == lit.rawValue
+            let color = colors[index]
+            lampView.layer?.backgroundColor = isLit
+                ? color.cgColor
+                : color.withAlphaComponent(0.13).cgColor
+            // Only the lit lamp glows.
+            lampView.layer?.shadowColor = color.cgColor
+            lampView.layer?.shadowOpacity = isLit ? 0.9 : 0
+            lampView.layer?.shadowRadius = isLit ? 4 : 0
+            lampView.layer?.shadowOffset = .zero
+        }
+        statusDot.toolTip = {
+            switch lit {
+            case .green:  return state == .victory ? "Done" : "Working"
+            case .yellow: return "Waiting for you"
+            case .red:    return "Failed"
+            case .none:   return "Idle"
+            }
+        }()
+    }
+
+    /// Within a couple of lines of the end. Measured against the laid-out text,
+    /// not the view frame, which lags behind a content change.
+    private var isScrolledToBottom: Bool {
+        guard let layout = transcript.layoutManager, let container = transcript.textContainer
+        else { return true }
+        layout.ensureLayout(for: container)
+        let contentHeight = layout.usedRect(for: container).height
+        let visible = scroll.contentView.documentVisibleRect
+        return visible.maxY >= contentHeight - 28
+    }
+
+    /// Replace the transcript without yanking the reader around.
+    ///
+    /// `setAttributedString` resets an NSTextView's scroll position to the top,
+    /// so the offset has to be captured beforehand and restored afterwards —
+    /// otherwise every refresh throws you back to the start of the session.
+    private func setBody(preserveScroll: Bool, _ text: NSAttributedString) {
+        // Nothing to do if the content is identical — this runs every 2s.
+        if preserveScroll, text.string == lastRendered { return }
+        lastRendered = text.string
+
+        let clip = scroll.contentView
+        let stickToBottom = !preserveScroll || isScrolledToBottom
+        let previousOrigin = clip.bounds.origin
+
+        transcript.textStorage?.setAttributedString(text)
+        if let container = transcript.textContainer {
+            transcript.layoutManager?.ensureLayout(for: container)
+        }
+
+        if stickToBottom {
+            // Scroll after the run loop has laid the new text out, otherwise
+            // it scrolls to the end of the *previous* content height.
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.transcript.scrollToEndOfDocument(nil) }
+            }
+        } else {
+            clip.scroll(to: previousOrigin)
+            scroll.reflectScrolledClipView(clip)
+        }
+    }
+
+    /// Turn transcript entries into something worth looking at: coloured role
+    /// tags, tool steps as a dim indented run, Claude's prose in full.
+    private func render(_ entries: [Transcript.Entry]) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        let body = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let tag = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
+
+        if entries.isEmpty {
+            return NSAttributedString(string: "Nothing in this session yet.",
+                                      attributes: [.font: body,
+                                                   .foregroundColor: NSColor.white.withAlphaComponent(0.4)])
+        }
+
+        for entry in entries {
+            switch entry.role {
+            case .user:
+                out.append(NSAttributedString(string: "YOU  ", attributes: [
+                    .font: tag, .foregroundColor: NSColor(srgbRed: 0.45, green: 0.72, blue: 1, alpha: 1)]))
+                out.append(NSAttributedString(string: entry.text + "\n\n", attributes: [
+                    .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.92)]))
+
+            case .assistant:
+                out.append(NSAttributedString(string: "CLAUDE  ", attributes: [
+                    .font: tag, .foregroundColor: accent]))
+                out.append(NSAttributedString(string: entry.text + "\n\n", attributes: [
+                    .font: body, .foregroundColor: NSColor.white.withAlphaComponent(0.85)]))
+
+            case .tool:
+                out.append(NSAttributedString(string: "   ▸ " + entry.text + "\n", attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular),
+                    .foregroundColor: NSColor.white.withAlphaComponent(0.38)]))
+            }
+        }
+        return out
     }
 
     // MARK: - sending
@@ -138,25 +496,29 @@ final class ChatController: NSObject, NSTextFieldDelegate {
         let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !running else { return }
 
-        guard let (sessionId, cwd) = StateChannel.readSession() else {
-            appendSystem("No session to reply to yet.")
+        guard let (sessionId, cwd) = activeSession else {
+            flashSubheader("no session to reply to")
             return
         }
 
-        // Don't race a session that is mid-turn — the terminal owns it.
-        if let state = trackView?.currentState, state == .launch || state == .racing || state == .spin {
-            appendSystem("Session is mid-turn — wait for the car to stop.")
+        // Don't race a session that is mid-turn — the terminal owns it. This
+        // only applies to the session the hooks are actually watching; the car
+        // says nothing about the state of the others.
+        let isLiveSession = sessionId == StateChannel.readSession()?.id
+        if isLiveSession, let state = trackView?.currentState,
+           state == .launch || state == .racing || state == .spin {
+            flashSubheader("session is mid-turn — wait for the car to stop")
             return
         }
 
         input.stringValue = ""
-        appendUser(text)
-        appendSystem("…")
         running = true
+        subheader.stringValue = "sending…"
 
-        let claude = NSHomeDirectory() + "/.local/bin/claude"
+        appendLive(role: "YOU", text: text, color: NSColor(srgbRed: 0.45, green: 0.72, blue: 1, alpha: 1))
+
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: claude)
+        task.executableURL = URL(fileURLWithPath: NSHomeDirectory() + "/.local/bin/claude")
         task.arguments = ["-r", sessionId, "-p", text]
         task.currentDirectoryURL = URL(fileURLWithPath: cwd)
 
@@ -183,40 +545,33 @@ final class ChatController: NSObject, NSTextFieldDelegate {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.running = false
-                    self.replaceLastSystemLine(with: reply.trimmingCharacters(in: .whitespacesAndNewlines))
+                    self.subheader.stringValue = ""
+                    self.reload()
+                    _ = reply       // the transcript is the source of truth
                 }
             }
         }
     }
 
-    // MARK: - transcript
-
-    private func append(_ text: String, color: NSColor) {
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-            .foregroundColor: color,
-        ]
-        transcript.textStorage?.append(NSAttributedString(string: text + "\n", attributes: attrs))
+    private func appendLive(role: String, text: String, color: NSColor) {
+        let out = NSMutableAttributedString()
+        out.append(NSAttributedString(string: role + "  ", attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .bold), .foregroundColor: color]))
+        out.append(NSAttributedString(string: text + "\n\n", attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.92)]))
+        transcript.textStorage?.append(out)
         transcript.scrollToEndOfDocument(nil)
     }
 
-    private func appendUser(_ text: String) {
-        append("you  > " + text, color: NSColor(srgbRed: 0.55, green: 0.78, blue: 1, alpha: 1))
-    }
-
-    private func appendSystem(_ text: String) {
-        append(text, color: NSColor.white.withAlphaComponent(0.75))
-    }
-
-    private func replaceLastSystemLine(with text: String) {
-        // Drop the trailing "…" placeholder line, then append the reply.
-        if let storage = transcript.textStorage {
-            let full = storage.string as NSString
-            let lastLine = full.range(of: "…\n", options: .backwards)
-            if lastLine.location != NSNotFound {
-                storage.deleteCharacters(in: lastLine)
+    private func flashSubheader(_ text: String) {
+        subheader.stringValue = text
+        subheader.textColor = NSColor.systemOrange
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.subheader.textColor = NSColor.white.withAlphaComponent(0.45)
+                self?.reload(preserveScroll: true)
             }
         }
-        appendSystem(text)
     }
 }
