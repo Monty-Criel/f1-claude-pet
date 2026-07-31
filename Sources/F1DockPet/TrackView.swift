@@ -46,7 +46,6 @@ final class TrackView: NSView {
     private enum LapMode { case shortLane, full }
     private var lapMode: LapMode = .shortLane
     private var fullLapReachedFarEnd = false
-    private var arrivedAtLeftEnd = false
 
     /// Off by default, on purpose.
     ///
@@ -85,7 +84,9 @@ final class TrackView: NSView {
     /// throws sparks over the kerbs; a cool-down is a slow roll.
     private enum Stint { case hotLap, coolDown }
     private var stint: Stint = .coolDown
-    private var stintRemaining: CGFloat = 0
+    /// Stints are counted in laps, not seconds — a lap being the length of the
+    /// Dock and back. A cool-down is exactly one.
+    private var stintLapsRemaining: Int = 1
     /// Bottoming-out sparks, struck at random while pushing.
     private var kerbSparks: CGFloat = 0
     /// Cheap deterministic-ish jitter for picking stint lengths.
@@ -182,6 +183,17 @@ final class TrackView: NSView {
     /// second car sets this directly and is always the opposite end.
     var pitHome: PitHome = .left {
         didSet { needsDisplay = true }
+    }
+
+    /// How hard the car drives while Claude works, 0.25×–2×, set by the speed
+    /// slider in the menu bar. Scales top speed only — braking, stints and
+    /// smoke all key off that, so the whole thing stays coherent.
+    static var speedFactor: CGFloat {
+        get {
+            let stored = UserDefaults.standard.object(forKey: "speedFactor") as? Double
+            return CGFloat(min(2.0, max(0.25, stored ?? 1.0)))
+        }
+        set { UserDefaults.standard.set(Double(min(2, max(0.25, newValue))), forKey: "speedFactor") }
     }
 
     /// The primary car's home end, as picked in the menu bar.
@@ -407,8 +419,14 @@ final class TrackView: NSView {
         if new != .spin { puncture = 0; engineFire = 0 }
         if new != .launch { launchSparks = 0 }
         if new != .racing { launchBurst = 0; kerbSparks = 0 }
-        // Every stretch of work opens with a push lap.
-        if new == .racing { stint = .hotLap; stintRemaining = 3 + random() * 4 }
+        // Every stretch of work opens with a push lap, and work is run in
+        // whole laps of the Dock rather than to a stopwatch.
+        if new == .racing {
+            stint = .hotLap
+            stintLapsRemaining = 1
+            lapMode = .full
+            fullLapReachedFarEnd = false
+        }
 
         switch new {
         case .idle:
@@ -563,7 +581,7 @@ final class TrackView: NSView {
     private func drive(dt: CGFloat) {
         // Calm enough to sit in your peripheral vision. This is a status light
         // that happens to be a car, not a screensaver.
-        let topSpeed: CGFloat = livelyMode ? 250 : 140
+        let topSpeed: CGFloat = (livelyMode ? 250 : 140) * TrackView.speedFactor
         let lane = self.lane
 
         // Reading the chat beats watching the car: stop dead, exactly where it
@@ -645,19 +663,8 @@ final class TrackView: NSView {
             }
 
             // Hot lap / cool-down cycle, so the pace varies while Claude
-            // works instead of holding one speed forever.
-            stintRemaining -= dt
-            if stintRemaining <= 0 {
-                if stint == .hotLap {
-                    stint = .coolDown
-                    stintRemaining = 2.5 + random() * 3.5
-                } else {
-                    stint = .hotLap
-                    stintRemaining = 3 + random() * 4
-                    // Every push lap starts with a shove.
-                    boostRemaining = max(boostRemaining, 0.7)
-                }
-            }
+            // works instead of holding one speed forever. Counted in laps —
+            // see `completeLap()`.
 
             // A launch burst raises the ceiling well beyond a normal boost
             // and lets the car accelerate hard out of the box.
@@ -700,7 +707,6 @@ final class TrackView: NSView {
                 // A long pause makes the whole thing read as occasional
                 // movement rather than continuous pacing.
                 dwellRemaining = stint == .hotLap ? 0.15 : (livelyMode ? 0.45 : 1.6)
-                arrivedAtLeftEnd = direction < 0
             }
 
         case .waiting:
@@ -799,17 +805,43 @@ final class TrackView: NSView {
         }
     }
 
-    /// Turn the car round at the end of a lane, retiring a full lap once the
-    /// car has been to the far end and come back.
+    /// Turn the car round at the end of a lane.
+    ///
+    /// A lap is the length of the Dock and back: it is retired when the car
+    /// returns to its home end having already been to the far one.
     private func turnAround() {
-        if lapMode == .full {
-            if arrivedAtLeftEnd {
-                fullLapReachedFarEnd = true
-            } else if fullLapReachedFarEnd {
-                lapMode = .shortLane        // lap complete, back to its corner
+        let atHomeEnd = (pitHome == .left) == (direction < 0)
+        if atHomeEnd {
+            if fullLapReachedFarEnd {
+                fullLapReachedFarEnd = false
+                completeLap()
             }
+        } else {
+            fullLapReachedFarEnd = true
         }
         direction *= -1
+    }
+
+    /// One lap of the Dock done. While Claude is working this drives the
+    /// hot-lap / cool-down cycle; otherwise it sends the car back to its
+    /// corner.
+    private func completeLap() {
+        guard state == .racing else {
+            lapMode = .shortLane            // one lap out was the whole point
+            return
+        }
+
+        stintLapsRemaining -= 1
+        guard stintLapsRemaining <= 0 else { return }
+
+        if stint == .hotLap {
+            stint = .coolDown
+            stintLapsRemaining = 1          // a cool-down is always one lap
+        } else {
+            stint = .hotLap
+            stintLapsRemaining = 1 + Int(random() * 2)   // one or two push laps
+            boostRemaining = max(boostRemaining, 0.7)    // start it with a shove
+        }
     }
 
     /// Ease towards a parking spot and stop cleanly on it.

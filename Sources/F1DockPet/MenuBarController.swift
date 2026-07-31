@@ -24,6 +24,11 @@ final class MenuBarController {
     var onPitHomeChanged: ((TrackView.PitHome) -> Void)?
     private var secondCandidates: [Transcript.SessionRef] = []
 
+    /// Rebuilt menus throw their views away, so these are held here rather
+    /// than recreated — the slider must survive long enough to be dragged.
+    private let speedSlider = NSSlider()
+    private let speedLabel = NSTextField(labelWithString: "")
+
     init(trackView: TrackView, onQuit: @escaping () -> Void) {
         self.trackView = trackView
         self.onQuit = onQuit
@@ -155,6 +160,13 @@ final class MenuBarController {
         themeItem.subtitle = ThemeColor.selected.displayName
         menu.addItem(themeItem)
 
+        // Pace while Claude is working. A slider rather than presets: the
+        // right speed depends on how big your Dock is and how distracting you
+        // find movement, and neither is something to guess for you.
+        let speedItem = NSMenuItem(title: "Speed", action: nil, keyEquivalent: "")
+        speedItem.view = speedView()
+        menu.addItem(speedItem)
+
         // Behaviour
         let lively = item("Lively mode", #selector(toggleLively))
         lively.state = (trackView?.livelyMode ?? false) ? .on : .off
@@ -179,6 +191,47 @@ final class MenuBarController {
         menu.addItem(item("Restart", #selector(restart)))
         menu.addItem(item("Quit", #selector(quit)))
         statusItem.menu = menu
+    }
+
+    /// A labelled slider laid out to sit inside the menu like a normal row.
+    private func speedView() -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 44))
+
+        let title = NSTextField(labelWithString: "Speed")
+        title.frame = NSRect(x: 21, y: 24, width: 80, height: 16)
+        title.font = .menuFont(ofSize: 13)
+        view.addSubview(title)
+
+        speedLabel.frame = NSRect(x: 101, y: 24, width: 98, height: 16)
+        speedLabel.alignment = .right
+        speedLabel.font = .menuFont(ofSize: 11)
+        speedLabel.textColor = .secondaryLabelColor
+        view.addSubview(speedLabel)
+
+        speedSlider.frame = NSRect(x: 21, y: 4, width: 178, height: 20)
+        speedSlider.minValue = 0.25
+        speedSlider.maxValue = 2.0
+        speedSlider.doubleValue = Double(TrackView.speedFactor)
+        speedSlider.isContinuous = true
+        speedSlider.target = self
+        speedSlider.action = #selector(speedChanged(_:))
+        view.addSubview(speedSlider)
+
+        updateSpeedLabel()
+        return view
+    }
+
+    private func updateSpeedLabel() {
+        let factor = TrackView.speedFactor
+        let name: String
+        switch factor {
+        case ..<0.6:  name = "Formation lap"
+        case ..<0.95: name = "Cruising"
+        case ..<1.35: name = "Race pace"
+        case ..<1.75: name = "Push"
+        default:      name = "Qualifying"
+        }
+        speedLabel.stringValue = String(format: "%@ · %.2f×", name, factor)
     }
 
     private func item(_ title: String, _ action: Selector) -> NSMenuItem {
@@ -208,6 +261,13 @@ final class MenuBarController {
               let compound = TyreCompound(rawValue: raw) else { return }
         TyreCompound.selected = compound
         rebuild()
+    }
+
+    /// Live while you drag: the car changes pace under the open menu, which is
+    /// the only way to judge whether the setting is right.
+    @objc private func speedChanged(_ sender: NSSlider) {
+        TrackView.speedFactor = CGFloat(sender.doubleValue)
+        updateSpeedLabel()
     }
 
     @objc private func selectPitHome(_ sender: NSMenuItem) {
