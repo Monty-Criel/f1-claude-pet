@@ -142,6 +142,15 @@ enum SelfTest {
         // An ordinary foreground Bash call is not background work at all.
         runs = Transcript.agentRuns(fromLines: [use("c1", "Bash", #"{"command":"ls"}"#)])
         equal(runs.count, 0, "agents: foreground commands are not listed")
+
+        // Finished work goes stale: an old job left on screen reads as current
+        // activity when it is nothing of the sort. Running work never does.
+        let stamped = #"{"type":"assistant","timestamp":"2020-01-01T00:00:00.000Z","message":{"content":[{"type":"tool_use","id":"d1","name":"Task","input":{"description":"Ancient audit"}}]}}"#
+        runs = Transcript.agentRuns(fromLines: [stamped, result("d1")])
+        equal(runs.count, 0, "agents: work finished long ago is dropped")
+
+        runs = Transcript.agentRuns(fromLines: [stamped])
+        equal(runs.count, 1, "agents: still-running work is kept however old")
     }
 
     private static func toolVerbs() {

@@ -514,27 +514,37 @@ final class ChatController: NSObject {
         guard !runs.isEmpty else { return out }
 
         let small = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        let running = runs.filter(\.isRunning).count
-        let done = runs.count - running
 
-        var heading = running > 0 ? "\(running) running" : "all finished"
-        if done > 0 { heading += " · \(done) completed" }
-        out.append(NSAttributedString(string: "\nAGENTS & BACKGROUND WORK — \(heading)\n", attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .bold),
-            .foregroundColor: accent]))
+        // Subagents and background shells are different animals — one is
+        // Claude working on your behalf, the other a command left running —
+        // so they get their own headings rather than one mixed list.
+        func section(_ title: String, _ entries: [Transcript.AgentRun]) {
+            guard !entries.isEmpty else { return }
+            let running = entries.filter(\.isRunning).count
+            let heading = running > 0
+                ? "\(running) running" + (entries.count > running ? " · \(entries.count - running) done" : "")
+                : "\(entries.count) done"
 
-        for run in runs {
-            out.append(NSAttributedString(string: "  \(run.symbol) ", attributes: [
-                .font: small,
-                .foregroundColor: run.isRunning ? accent : NSColor.white.withAlphaComponent(0.3)]))
-            out.append(NSAttributedString(string: run.label, attributes: [
-                .font: small,
-                .foregroundColor: NSColor.white.withAlphaComponent(run.isRunning ? 0.88 : 0.42)]))
-            out.append(NSAttributedString(string: run.isRunning ? "  · running\n" : "  · done\n",
-                                          attributes: [
-                .font: small,
-                .foregroundColor: NSColor.white.withAlphaComponent(run.isRunning ? 0.6 : 0.3)]))
+            out.append(NSAttributedString(string: "\n\(title) — \(heading)\n", attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .bold),
+                .foregroundColor: accent]))
+
+            for run in entries {
+                out.append(NSAttributedString(string: "  \(run.symbol) ", attributes: [
+                    .font: small,
+                    .foregroundColor: run.isRunning ? accent : NSColor.white.withAlphaComponent(0.3)]))
+                out.append(NSAttributedString(string: run.label, attributes: [
+                    .font: small,
+                    .foregroundColor: NSColor.white.withAlphaComponent(run.isRunning ? 0.88 : 0.42)]))
+                out.append(NSAttributedString(string: run.isRunning ? "  · running\n" : "  · done\n",
+                                              attributes: [
+                    .font: small,
+                    .foregroundColor: NSColor.white.withAlphaComponent(run.isRunning ? 0.6 : 0.3)]))
+            }
         }
+
+        section("SUBAGENTS", runs.filter { $0.kind == .agent })
+        section("BACKGROUND SHELLS", runs.filter { $0.kind == .background })
         return out
     }
 
