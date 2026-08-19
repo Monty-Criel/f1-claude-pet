@@ -31,6 +31,13 @@ rm -f "$ICONSET/icon_1024.png"
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null \
     || echo "warning: iconutil failed, app will use the default icon"
 
+# Real engine recordings (CC BY-SA, see Resources/Sounds/CREDITS.md) ride in
+# the bundle; the bare binary falls back to synthesis without them.
+if [ -d "$ROOT/Resources/Sounds" ]; then
+    mkdir -p "$APP/Contents/Resources/Sounds"
+    cp "$ROOT/Resources/Sounds/"*.m4a "$APP/Contents/Resources/Sounds/" 2>/dev/null || true
+fi
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

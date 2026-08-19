@@ -28,10 +28,32 @@ enum GifRecorder {
     /// Height of the fake Dock band the car rides on.
     private static let dockBand: CGFloat = 44
 
+    /// The icon lineup drawn on the fake Dock.
+    private static let lineup: [FakeIcon] = [.finder, .compass, .mail, .messages,
+                                             .maps, .photos, .calendar, .notes,
+                                             .music, .terminal, .code, .folder,
+                                             .gear, .store]
+    private static let tileSize: CGFloat = 30
+    private static let tileGap: CGFloat = 10
+    private static let dividerWidth: CGFloat = 14
+
+    /// Where the glass pill sits for a given stage width — shared between
+    /// record() (which sizes the track to it, so the car cannot overrun the
+    /// Dock) and compose() (which draws it there).
+    static func pillRect(stageWidth: CGFloat) -> CGRect {
+        let rowWidth = CGFloat(lineup.count + 1) * tileSize
+            + CGFloat(lineup.count) * tileGap + dividerWidth
+        let x = (stageWidth - rowWidth) / 2
+        return CGRect(x: x - 12, y: 2, width: rowWidth + 24, height: dockBand - 6)
+    }
+
     static func record(to path: String, car: (any Car)? = nil,
                        seconds: Double = 9, fps: Int = 20,
                        width: CGFloat = 900, height: CGFloat = 150) -> Bool {
-        let view = TrackView(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        // The track is exactly the pill: the car turns where the Dock ends,
+        // the same constraint the real overlay lives under.
+        let pill = pillRect(stageWidth: width)
+        let view = TrackView(frame: CGRect(x: 0, y: 0, width: pill.width, height: height))
         if let car { view.car = car }
         view.livelyMode = true              // the whole point is the show
 
@@ -88,43 +110,34 @@ enum GifRecorder {
         let space = CGColorSpaceCreateDeviceRGB()
         ctx.setShouldAntialias(true)
 
-        // Night-desktop backdrop with soft wallpaper blobs — what the glass
-        // will appear to diffuse.
-        ctx.setFillColor(CGColor(red: 0.055, green: 0.05, blue: 0.075, alpha: 1))
-        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        let blobs: [(CGFloat, CGFloat, CGFloat, (CGFloat, CGFloat, CGFloat))] = [
-            (w * 0.18, 30, 200, (0.45, 0.30, 0.85)),
-            (w * 0.52, 90, 260, (0.85, 0.42, 0.30)),
-            (w * 0.82, 20, 190, (0.25, 0.50, 0.90)),
-            (w * 0.35, 130, 220, (0.20, 0.65, 0.60)),
-        ]
-        for (bx, by, radius, tint) in blobs {
-            let colors = [CGColor(red: tint.0, green: tint.1, blue: tint.2, alpha: 0.16),
-                          CGColor(red: tint.0, green: tint.1, blue: tint.2, alpha: 0)] as CFArray
-            guard let gradient = CGGradient(colorsSpace: space, colors: colors,
-                                            locations: [0, 1]) else { continue }
+        // Clean night backdrop: a quiet vertical gradient with one soft glow
+        // above the Dock — no busy wallpaper.
+        let sky = [CGColor(red: 0.115, green: 0.125, blue: 0.16, alpha: 1),
+                   CGColor(red: 0.05, green: 0.055, blue: 0.075, alpha: 1)] as CFArray
+        if let gradient = CGGradient(colorsSpace: space, colors: sky, locations: [0, 1]) {
+            ctx.drawLinearGradient(gradient,
+                                   start: CGPoint(x: 0, y: CGFloat(height)),
+                                   end: CGPoint(x: 0, y: 0), options: [])
+        }
+        let glow = [CGColor(red: 0.30, green: 0.45, blue: 0.75, alpha: 0.10),
+                    CGColor(red: 0.30, green: 0.45, blue: 0.75, alpha: 0)] as CFArray
+        if let gradient = CGGradient(colorsSpace: space, colors: glow, locations: [0, 1]) {
             ctx.drawRadialGradient(gradient,
-                                   startCenter: CGPoint(x: bx, y: by), startRadius: 0,
-                                   endCenter: CGPoint(x: bx, y: by), endRadius: radius,
+                                   startCenter: CGPoint(x: w / 2, y: 30), startRadius: 0,
+                                   endCenter: CGPoint(x: w / 2, y: 30), endRadius: w * 0.55,
                                    options: [])
         }
 
-        // Icon lineup and geometry first, so the glass pill can wrap it the
-        // way the real Dock wraps its contents.
-        let icons: [FakeIcon] = [.finder, .compass, .mail, .messages, .maps,
-                                 .photos, .calendar, .notes, .music, .terminal,
-                                 .code, .folder, .gear, .store]
-        let tile: CGFloat = 30
-        let gap: CGFloat = 10
-        let divider: CGFloat = 14
-        let rowWidth = CGFloat(icons.count + 1) * tile
-            + CGFloat(icons.count) * gap + divider
-        var x = (w - rowWidth) / 2
+        let icons = lineup
+        let tile = tileSize
+        let gap = tileGap
+        let divider = dividerWidth
         let iconY: CGFloat = 6
 
-        // The glass pill: gradient fill, hairline border, bright top edge.
+        // The glass pill, where record() promised it would be.
         let pillTop = dockBand - 4
-        let pillRect = CGRect(x: x - 12, y: 2, width: rowWidth + 24, height: pillTop - 2)
+        let pillRect = Self.pillRect(stageWidth: w)
+        var x = pillRect.minX + 12
         let pill = CGPath(roundedRect: pillRect, cornerWidth: 16, cornerHeight: 16,
                           transform: nil)
         ctx.saveGState()
@@ -156,11 +169,13 @@ enum GifRecorder {
         x += divider
         FakeIcon.trash.draw(in: CGRect(x: x, y: iconY, width: tile, height: tile), ctx: ctx)
 
-        // The car rides the Dock's top edge, hard pixels against soft glass.
+        // The car rides the Dock's top edge — over the pill and only the
+        // pill, since the track was sized to it.
         ctx.interpolationQuality = .none
         ctx.setShouldAntialias(false)
-        ctx.draw(frame, in: CGRect(x: 0, y: pillTop,
-                                   width: w, height: CGFloat(height) - pillTop))
+        ctx.draw(frame, in: CGRect(x: pillRect.minX, y: pillTop,
+                                   width: pillRect.width,
+                                   height: CGFloat(height) - pillTop))
         return ctx.makeImage()
     }
 
