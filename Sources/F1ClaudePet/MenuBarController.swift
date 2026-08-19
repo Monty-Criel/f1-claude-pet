@@ -25,12 +25,33 @@ final class MenuBarController {
 
     /// Applies a new chat panel size to every open panel.
     var onChatSizeChanged: ((ChatController.Size) -> Void)?
+
+    /// Re-applies the car scale after the size slider moves.
+    var onCarSizeChanged: (() -> Void)?
     private var secondCandidates: [Transcript.SessionRef] = []
 
     /// Rebuilt menus throw their views away, so these are held here rather
-    /// than recreated — the slider must survive long enough to be dragged.
+    /// than recreated — the sliders must survive long enough to be dragged.
     private let speedSlider = NSSlider()
     private let speedLabel = NSTextField(labelWithString: "")
+    private let sizeSlider = NSSlider()
+    private let sizeLabel = NSTextField(labelWithString: "")
+
+    /// Swap the checkered flag for an alert while a session waits on the user.
+    func setAlert(_ on: Bool) {
+        guard let button = statusItem.button else { return }
+        if on {
+            button.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
+                                   accessibilityDescription: "Claude is waiting")
+            button.image?.isTemplate = true
+            button.contentTintColor = .systemOrange
+        } else {
+            button.image = NSImage(systemSymbolName: "flag.checkered",
+                                   accessibilityDescription: "F1 Claude Pet")
+            button.image?.isTemplate = true
+            button.contentTintColor = nil
+        }
+    }
 
     init(trackView: TrackView, onQuit: @escaping () -> Void) {
         self.trackView = trackView
@@ -183,7 +204,33 @@ final class MenuBarController {
         speedItem.view = speedView()
         menu.addItem(speedItem)
 
+        // Car size on top of the Dock-matched base, with a way back.
+        let carSizeItem = NSMenuItem(title: "Car size", action: nil, keyEquivalent: "")
+        carSizeItem.view = sizeView()
+        menu.addItem(carSizeItem)
+        if TrackView.sizeFactor != 1.0 {
+            let reset = item("Reset car size", #selector(resetCarSize))
+            reset.subtitle = "Back to matching the Dock"
+            menu.addItem(reset)
+        }
+
         // Behaviour
+        let hideFS = item("Hide in full screen", #selector(toggleHideInFullScreen))
+        hideFS.state = AppDelegate.hideInFullScreen ? .on : .off
+        hideFS.toolTip = "Disappear entirely while an app is full screen, "
+            + "instead of riding along its bottom edge."
+        menu.addItem(hideFS)
+
+        let boxbox = item("Box box alerts", #selector(toggleBoxBox))
+        boxbox.state = BoxBoxAlert.isEnabled ? .on : .off
+        boxbox.subtitle = "Notify when Claude waits over 2 min"
+        menu.addItem(boxbox)
+
+        let sound = item("Sound effects", #selector(toggleSound))
+        sound.state = SoundEngine.isEnabled ? .on : .off
+        sound.subtitle = "Radio call on box box, engine on launch"
+        menu.addItem(sound)
+
         let lively = item("Lively mode", #selector(toggleLively))
         lively.state = (trackView?.livelyMode ?? false) ? .on : .off
         lively.toolTip = "Full-Dock laps and bigger smoke. Off by default so the pet "
@@ -210,15 +257,21 @@ final class MenuBarController {
     }
 
     /// A labelled slider laid out to sit inside the menu like a normal row.
+    ///
+    /// The menu's width follows its widest ordinary item, so this view carries
+    /// autoresizing masks: the row stretches with the menu, the value label
+    /// pins right, and the slider spans whatever width the row ends up with.
     private func speedView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 44))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 44))
+        view.autoresizingMask = [.width]
 
         let title = NSTextField(labelWithString: "Speed")
         title.frame = NSRect(x: 21, y: 24, width: 80, height: 16)
         title.font = .menuFont(ofSize: 13)
         view.addSubview(title)
 
-        speedLabel.frame = NSRect(x: 101, y: 24, width: 98, height: 16)
+        speedLabel.frame = NSRect(x: view.bounds.width - 21 - 130, y: 24, width: 130, height: 16)
+        speedLabel.autoresizingMask = [.minXMargin]
         speedLabel.alignment = .right
         speedLabel.font = .menuFont(ofSize: 11)
         speedLabel.textColor = .secondaryLabelColor
@@ -226,7 +279,8 @@ final class MenuBarController {
 
         // Indexed over the presets rather than the raw multiplier, so the knob
         // clicks into each named slot instead of landing between them.
-        speedSlider.frame = NSRect(x: 21, y: 4, width: 178, height: 22)
+        speedSlider.frame = NSRect(x: 21, y: 4, width: view.bounds.width - 42, height: 22)
+        speedSlider.autoresizingMask = [.width]
         speedSlider.minValue = 0
         speedSlider.maxValue = Double(TrackView.speedPresets.count - 1)
         speedSlider.numberOfTickMarks = TrackView.speedPresets.count
@@ -240,6 +294,62 @@ final class MenuBarController {
 
         updateSpeedLabel()
         return view
+    }
+
+    private func sizeView() -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 44))
+        view.autoresizingMask = [.width]
+
+        let title = NSTextField(labelWithString: "Car size")
+        title.frame = NSRect(x: 21, y: 24, width: 80, height: 16)
+        title.font = .menuFont(ofSize: 13)
+        view.addSubview(title)
+
+        sizeLabel.frame = NSRect(x: view.bounds.width - 21 - 130, y: 24, width: 130, height: 16)
+        sizeLabel.autoresizingMask = [.minXMargin]
+        sizeLabel.alignment = .right
+        sizeLabel.font = .menuFont(ofSize: 11)
+        sizeLabel.textColor = .secondaryLabelColor
+        view.addSubview(sizeLabel)
+
+        sizeSlider.frame = NSRect(x: 21, y: 4, width: view.bounds.width - 42, height: 22)
+        sizeSlider.autoresizingMask = [.width]
+        sizeSlider.minValue = 0.5
+        sizeSlider.maxValue = 2.0
+        sizeSlider.doubleValue = Double(TrackView.sizeFactor)
+        sizeSlider.isContinuous = true
+        sizeSlider.target = self
+        sizeSlider.action = #selector(sizeChanged(_:))
+        view.addSubview(sizeSlider)
+
+        updateSizeLabel()
+        return view
+    }
+
+    private func updateSizeLabel() {
+        let factor = TrackView.sizeFactor
+        sizeLabel.stringValue = abs(factor - 1) < 0.01
+            ? "matching the Dock"
+            : String(format: "×%.2f · default ×1.00", factor)
+    }
+
+    /// Live while dragging, like the speed slider — you judge a size by
+    /// looking at the car, not the number.
+    @objc private func sizeChanged(_ sender: NSSlider) {
+        // Snap the detent so "back to default" is reachable by hand.
+        var value = CGFloat(sender.doubleValue)
+        if abs(value - 1) < 0.06 { value = 1.0; sender.doubleValue = 1.0 }
+        TrackView.sizeFactor = value
+        updateSizeLabel()
+        onCarSizeChanged?()
+    }
+
+    @objc private func resetCarSize() {
+        TrackView.sizeFactor = 1.0
+        sizeSlider.doubleValue = 1.0
+        updateSizeLabel()
+        onCarSizeChanged?()
+        rebuild()
     }
 
     private func updateSpeedLabel() {
@@ -308,6 +418,22 @@ final class MenuBarController {
         rebuild()
     }
 
+    @objc private func toggleBoxBox() {
+        BoxBoxAlert.isEnabled.toggle()
+        if !BoxBoxAlert.isEnabled { setAlert(false) }
+        rebuild()
+    }
+
+    @objc private func toggleSound() {
+        SoundEngine.isEnabled.toggle()
+        rebuild()
+    }
+
+    @objc private func toggleHideInFullScreen() {
+        AppDelegate.hideInFullScreen.toggle()
+        rebuild()
+    }
+
     @objc private func toggleLively() {
         trackView?.livelyMode.toggle()
         rebuild()
@@ -317,6 +443,7 @@ final class MenuBarController {
         guard let raw = sender.representedObject as? String,
               let state = PetState(rawValue: raw) else { return }
         trackView?.apply(state)
+        SoundEngine.shared.play(for: state)
     }
 
     /// Relaunch in place.

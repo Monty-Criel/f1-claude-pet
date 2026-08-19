@@ -10,6 +10,8 @@
 #   scripts/pet <state>        push a state: idle launch racing boost
 #                              waiting victory crash
 #   scripts/pet test           run the test suite
+#   scripts/pet sound [name]   audition a sound effect: radio | launch
+#   scripts/pet gif [path]     render the demo GIF (default /tmp/f1-claude-pet.gif)
 #   scripts/pet coverage       run tests under coverage and refresh the badge
 #   scripts/pet probe          print the Dock geometry it resolved
 #   scripts/pet sprite [path]  export a magnified PNG of the car
@@ -67,6 +69,10 @@ case "${1:-start}" in
   restart) start ;;
   rebuild) rebuild ;;
   test)    build; "$BIN" --self-test ;;
+  gif)     build; "$BIN" --export-gif "${2:-/tmp/f1-claude-pet.gif}" ;;
+  sound)   build
+           NAME="${2:-radio}"
+           "$BIN" --export-sound "$NAME" "/tmp/pet-$NAME.wav" && afplay "/tmp/pet-$NAME.wav" ;;
   coverage) "$ROOT/scripts/coverage" "${2:---badge}" ;;
   probe)   build; "$BIN" --probe ;;
   sprite)  build; "$BIN" --export-sprite "${2:-/tmp/rb22.png}" ;;

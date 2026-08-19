@@ -5,6 +5,10 @@
 [![Tests](https://github.com/Monty-Criel/f1-claude-pet/actions/workflows/tests.yml/badge.svg)](https://github.com/Monty-Criel/f1-claude-pet/actions/workflows/tests.yml)
 ![Coverage](docs/coverage.svg)
 
+![The car launching, lapping and celebrating on a Dock](docs/demo.gif)
+
+*Rendered by the app itself — regenerate any time with `pet gif`.*
+
 > **Beta — v0.9.0.** It runs all day on the author's machine, but expect rough
 > edges, and expect things to move between versions.
 
@@ -105,7 +109,16 @@ echo 'alias pet="~/Documents/GitHub/f1-claude-pet/scripts/pet"' >> ~/.zshrc
   histogram with estimates for days still to come, and activity stats.
 - **Pin button** → the panel rides above the car, or unpin to drag it anywhere.
 - **Menu bar 🏁** → switch car, change tyre compound, pause, trigger any
-  animation, turn on a second car, restart, quit.
+  animation, turn on a second car, restart, quit — plus toggles for box box
+  alerts, sound effects, and hiding in full screen.
+- **The car wears your Dock's size** — change the Dock size slider and the car
+  re-scales to match within a second.
+- **Box box alerts** — if Claude waits for your input over 2 minutes, the menu
+  bar icon turns into an alert and a notification names the waiting session.
+  Click it to open the pit wall.
+- **Sound** — a synthesised team-radio call when the car boxes and an engine
+  pull with upshifts at lights out. All generated in-process (no recordings);
+  audition with `pet sound radio` / `pet sound launch`, toggle in the menu.
 
 ## The garage
 
@@ -133,6 +146,8 @@ pet probe            # print the Dock geometry it resolved
 pet sprite out.png   # export a magnified PNG of the current car
 pet test             # run the test suite
 pet coverage         # run tests under coverage and refresh docs/coverage.svg
+pet gif out.gif      # render the demo GIF headlessly (no permissions needed)
+pet sound radio      # audition a sound effect: radio | launch
 pet victory          # trigger any state by hand:
                      # idle launch racing boost waiting victory crash
 ```

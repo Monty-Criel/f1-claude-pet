@@ -216,7 +216,7 @@ enum UsageService {
                    valueText: String(format: "$%.2f of $%.2f", spent, cap))
     }
 
-    private static func resetText(_ value: Any?) -> String {
+    static func resetText(_ value: Any?) -> String {
         var date: Date?
         if let s = value as? String {
             let iso = ISO8601DateFormatter()

@@ -18,8 +18,45 @@ final class TrackView: NSView {
 
     /// Screen points per art unit. 2.25 with matching raster detail gives a
     /// slightly bigger car drawn from 1pt pixels — round wheels, legible
-    /// lettering — instead of chunky 2pt blocks.
-    private let scale: CGFloat = 2.25
+    /// lettering — instead of chunky 2pt blocks. Re-set from the measured Dock
+    /// height while the app runs, so the car tracks the Dock size slider.
+    private(set) var scale: CGFloat = 2.25
+
+    func setScale(_ new: CGFloat) {
+        guard new != scale else { return }
+        scale = new
+        needsDisplay = true
+    }
+
+    /// User size preference on top of the Dock-derived scale: ×1.0 is the
+    /// default ("match the Dock"), the menu slider moves it either way, and
+    /// Reset puts it back.
+    static var sizeFactor: CGFloat {
+        get {
+            let stored = UserDefaults.standard.object(forKey: "sizeFactor") as? Double
+            return CGFloat(min(2.0, max(0.5, stored ?? 1.0)))
+        }
+        set { UserDefaults.standard.set(Double(min(2.0, max(0.5, newValue))), forKey: "sizeFactor") }
+    }
+
+    /// What the car actually wears: the Dock-derived base (or the 2.25 the art
+    /// was tuned at when nothing was measured) times the user's preference.
+    static func effectiveScale(dockHeight: CGFloat?) -> CGFloat {
+        let base = dockHeight.map(scale(forDockHeight:)) ?? 2.25
+        return min(4.5, max(0.8, base * sizeFactor))
+    }
+
+    /// The Dock-height → sprite-scale mapping, kept pure so it is testable.
+    ///
+    /// Anchored to the ratio the art was tuned at (an 84pt Dock wears a 2.25×
+    /// car), quantised to 0.25 steps — magnification makes the measured strip
+    /// height twitch while the pointer hovers the Dock, and re-rasterising the
+    /// sprite every twitch would flap — and clamped to sizes that still read.
+    static func scale(forDockHeight height: CGFloat) -> CGFloat {
+        let raw = height * 2.25 / 84
+        let quantised = (raw * 4).rounded() / 4
+        return min(3.5, max(1.0, quantised))
+    }
 
     /// Fraction of the Dock width the car normally uses, from the right end.
     private let laneFraction: CGFloat = 1.0 / 3.0
@@ -546,6 +583,12 @@ final class TrackView: NSView {
         let now = CACurrentMediaTime()
         let dt = min(now - lastFrameTime, 1.0 / 30.0)   // clamp after a stall
         lastFrameTime = now
+        advance(dt: dt)
+    }
+
+    /// One simulation step with a supplied delta. The display link feeds it
+    /// wall-clock time; the gif recorder steps it manually with a fixed dt.
+    func advance(dt: CFTimeInterval) {
         guard !isPaused else { return }
         stateAge += dt
         let dtf = CGFloat(dt)

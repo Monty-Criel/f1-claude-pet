@@ -48,8 +48,13 @@ enum PetState: String, CaseIterable {
 /// starting late, or being restarted mid-session.
 enum StateChannel {
 
+    /// Overridable for tests, which point it at a scratch directory; the
+    /// running app always uses the real one.
+    nonisolated(unsafe) static var rootOverride: URL?
+
     static var directory: URL {
-        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".f1-claude-pet")
+        rootOverride
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".f1-claude-pet")
     }
 
     static var file: URL {
@@ -169,7 +174,7 @@ enum StateChannel {
     /// When the current turn started, stamped by the `UserPromptSubmit` hook.
     /// Lets the pit wall show elapsed time without polling anything.
     static func turnStart() -> Date? {
-        let path = NSHomeDirectory() + "/.f1-claude-pet/turn-start"
+        let path = directory.appendingPathComponent("turn-start").path
         guard let raw = try? String(contentsOfFile: path, encoding: .utf8),
               let seconds = TimeInterval(raw.trimmingCharacters(in: .whitespacesAndNewlines))
         else { return nil }
