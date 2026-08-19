@@ -242,15 +242,21 @@ final class MenuBarController {
     }
 
     /// A labelled slider laid out to sit inside the menu like a normal row.
+    ///
+    /// The menu's width follows its widest ordinary item, so this view carries
+    /// autoresizing masks: the row stretches with the menu, the value label
+    /// pins right, and the slider spans whatever width the row ends up with.
     private func speedView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 44))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 44))
+        view.autoresizingMask = [.width]
 
         let title = NSTextField(labelWithString: "Speed")
         title.frame = NSRect(x: 21, y: 24, width: 80, height: 16)
         title.font = .menuFont(ofSize: 13)
         view.addSubview(title)
 
-        speedLabel.frame = NSRect(x: 101, y: 24, width: 98, height: 16)
+        speedLabel.frame = NSRect(x: view.bounds.width - 21 - 130, y: 24, width: 130, height: 16)
+        speedLabel.autoresizingMask = [.minXMargin]
         speedLabel.alignment = .right
         speedLabel.font = .menuFont(ofSize: 11)
         speedLabel.textColor = .secondaryLabelColor
@@ -258,7 +264,8 @@ final class MenuBarController {
 
         // Indexed over the presets rather than the raw multiplier, so the knob
         // clicks into each named slot instead of landing between them.
-        speedSlider.frame = NSRect(x: 21, y: 4, width: 178, height: 22)
+        speedSlider.frame = NSRect(x: 21, y: 4, width: view.bounds.width - 42, height: 22)
+        speedSlider.autoresizingMask = [.width]
         speedSlider.minValue = 0
         speedSlider.maxValue = Double(TrackView.speedPresets.count - 1)
         speedSlider.numberOfTickMarks = TrackView.speedPresets.count

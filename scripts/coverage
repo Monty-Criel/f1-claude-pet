@@ -10,7 +10,7 @@
 # `--self-test` entry point under an instrumented build.
 set -euo pipefail
 
-THRESHOLD=${THRESHOLD:-28}
+THRESHOLD=${THRESHOLD:-45}
 
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do

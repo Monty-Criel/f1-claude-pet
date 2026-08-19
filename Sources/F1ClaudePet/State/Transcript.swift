@@ -41,8 +41,12 @@ enum Transcript {
     /// Ordered by transcript mtime rather than anything Claude Code records,
     /// because that is the only thing guaranteed to move when a session is
     /// actually used.
+    /// Overridable for tests; the running app never touches it.
+    nonisolated(unsafe) static var projectsRoot =
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/projects")
+
     static func recentSessions(limit: Int = 3) -> [SessionRef] {
-        let projects = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/projects")
+        let projects = projectsRoot
         guard let folders = try? FileManager.default.contentsOfDirectory(
             at: projects, includingPropertiesForKeys: nil) else { return [] }
 
@@ -105,7 +109,7 @@ enum Transcript {
     }
 
     static func url(id: String, cwd: String) -> URL? {
-        let projects = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/projects")
+        let projects = projectsRoot
 
         // Project folders are the cwd with path separators turned into dashes.
         let direct = projects
@@ -142,9 +146,14 @@ enum Transcript {
     /// Recent conversation, oldest first. Tool calls are folded into single
     /// `.tool` entries so the panel can show what Claude actually did.
     static func recent(id: String, cwd: String, limit: Int = 40) -> [Entry] {
+        recent(fromLines: tailLines(id: id, cwd: cwd), limit: limit)
+    }
+
+    /// Parsing split from file access so fixtures can exercise it.
+    static func recent(fromLines lines: [String], limit: Int = 40) -> [Entry] {
         var entries: [Entry] = []
 
-        for line in tailLines(id: id, cwd: cwd) {
+        for line in lines {
             guard line.count < maxLineLength,
                   let data = line.data(using: .utf8),
                   let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -243,7 +252,11 @@ enum Transcript {
     }
 
     static func contextInfo(id: String, cwd: String) -> ContextInfo? {
-        for line in tailLines(id: id, cwd: cwd).reversed() {
+        contextInfo(fromLines: tailLines(id: id, cwd: cwd))
+    }
+
+    static func contextInfo(fromLines lines: [String]) -> ContextInfo? {
+        for line in lines.reversed() {
             guard line.count < maxLineLength,
                   line.contains("\"usage\""), line.contains("\"assistant\""),
                   let data = line.data(using: .utf8),
@@ -429,12 +442,16 @@ enum Transcript {
     }
 
     static func turnStats(id: String, cwd: String) -> TurnStats {
+        turnStats(fromLines: tailLines(id: id, cwd: cwd))
+    }
+
+    static func turnStats(fromLines lines: [String]) -> TurnStats {
         var tokens = 0
         var lastTool: String?
 
         // Walk backwards to the last user message; everything after it belongs
         // to the turn in progress.
-        for line in tailLines(id: id, cwd: cwd).reversed() {
+        for line in lines.reversed() {
             guard line.count < maxLineLength,
                   let data = line.data(using: .utf8),
                   let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
