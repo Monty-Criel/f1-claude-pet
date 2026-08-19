@@ -2,6 +2,7 @@
 
 **A Formula 1 car that lives on your macOS Dock and races when Claude Code works.**
 
+[![Release](https://img.shields.io/github/v/release/Monty-Criel/f1-claude-pet?include_prereleases&label=release&color=e07a4f)](https://github.com/Monty-Criel/f1-claude-pet/releases)
 [![Tests](https://github.com/Monty-Criel/f1-claude-pet/actions/workflows/tests.yml/badge.svg)](https://github.com/Monty-Criel/f1-claude-pet/actions/workflows/tests.yml)
 ![Coverage](docs/coverage.svg)
 

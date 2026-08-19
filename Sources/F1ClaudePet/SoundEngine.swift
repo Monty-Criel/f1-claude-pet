@@ -93,7 +93,7 @@ enum SoundSynth {
 
     static let sampleRate: Double = 44_100
 
-    // MARK: - launch: a V6 pull with two upshifts
+    // MARK: - launch: a V10 pull with two upshifts
 
     static func launchClip() -> AVAudioPCMBuffer? {
         let duration = 1.35
@@ -101,15 +101,18 @@ enum SoundSynth {
         var samples = [Float](repeating: 0, count: n)
 
         // The rev curve: three pulls with two gear drops between them.
-        // (startT, endT, startHz, endHz) — firing frequency, not RPM.
+        // (startT, endT, startHz, endHz) — firing frequency, not RPM. A V10
+        // fires five times per rev, so nearing the limiter the fundamental
+        // sits over a kilohertz: that is the scream. No turbo — these were
+        // naturally aspirated, which is exactly why they sing.
         let gears: [(Double, Double, Double, Double)] = [
-            (0.00, 0.50, 95, 290),
-            (0.50, 0.90, 200, 330),
-            (0.90, 1.35, 240, 370),
+            (0.00, 0.50, 330, 950),
+            (0.50, 0.90, 640, 1180),
+            (0.90, 1.35, 820, 1420),
         ]
 
-        var phase = 0.0
-        var whistlePhase = 0.0
+        var phaseA = 0.0
+        var phaseB = 0.0
         var rng: UInt64 = 0x9E3779B97F4A7C15
 
         for i in 0..<n {
@@ -118,29 +121,31 @@ enum SoundSynth {
                 ?? gears.last else { continue }
             let f = gear.2 + (gear.3 - gear.2) * (t - gear.0) / (gear.1 - gear.0)
 
-            phase += f / sampleRate
-            // Additive engine note: sawtooth-weighted harmonics, odd ones
-            // boosted — the raspy V6 character rather than a smooth buzz.
+            // Two voices, slightly detuned — the exhaust-bank beating that
+            // makes a V10 shimmer instead of buzzing like a synth.
+            phaseA += f / sampleRate
+            phaseB += f * 1.013 / sampleRate
+
             var v = 0.0
-            for k in 1...9 {
-                let w = 1.0 / Double(k) * (k % 2 == 1 ? 1.35 : 0.75)
-                v += w * sin(2 * .pi * phase * Double(k))
+            for k in 1...7 {
+                // Bright weighting: the upper harmonics roll off slowly, which
+                // is where the scream lives; keep them under Nyquist.
+                guard f * Double(k) * 1.05 < sampleRate / 2 else { break }
+                let w = 1.0 / pow(Double(k), 0.72)
+                v += w * sin(2 * .pi * phaseA * Double(k))
+                v += w * 0.55 * sin(2 * .pi * phaseB * Double(k))
             }
-            v /= 4.2
+            v /= 5.6
 
-            // Turbo whistle: thin, high, sweeping with the pull.
-            whistlePhase += (1800 + f * 14) / sampleRate
-            v += 0.045 * sin(2 * .pi * whistlePhase)
-
-            // Intake / tyre noise bed.
+            // Mechanical/intake noise bed — thinner than the turbo car's.
             rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17
             let noise = Double(Int64(bitPattern: rng % 2000) - 1000) / 1000.0
-            v += noise * 0.06
+            v += noise * 0.045
 
-            // Envelope: sharp in, small dip at each shift, tail out.
+            // Envelope: sharp in, a lift at each shift, tail out.
             var env = min(1.0, t / 0.03) * min(1.0, (duration - t) / 0.25)
             for shift in [0.50, 0.90] where abs(t - shift) < 0.03 {
-                env *= 0.35 + 0.65 * abs(t - shift) / 0.03   // the lift-off blip
+                env *= 0.30 + 0.70 * abs(t - shift) / 0.03   // the lift-off blip
             }
             samples[i] = Float(v * env)
         }
