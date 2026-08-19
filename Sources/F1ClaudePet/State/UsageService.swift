@@ -6,7 +6,7 @@ import Security
 /// endpoint.
 ///
 /// Worth knowing:
-///  * The keychain read triggers a one-time macOS prompt naming F1DockPet —
+///  * The keychain read triggers a one-time macOS prompt naming F1ClaudePet —
 ///    "Always Allow" makes it silent afterwards. The token never leaves the
 ///    machine except to api.anthropic.com, its own service.
 ///  * This endpoint reports billing state — calling it costs no tokens.
@@ -44,7 +44,7 @@ enum UsageService {
     private static let cacheLifetime: TimeInterval = 30 * 60
 
     private static var cacheFile: URL {
-        URL(fileURLWithPath: NSHomeDirectory() + "/.f1-dock-pet/usage.json")
+        URL(fileURLWithPath: NSHomeDirectory() + "/.f1-claude-pet/usage.json")
     }
 
     /// Refresh if the cache is stale. `onChange` fires only when new data (or a

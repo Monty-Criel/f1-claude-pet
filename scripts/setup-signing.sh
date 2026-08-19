@@ -9,6 +9,9 @@
 # certificate, the identity is the cert, which never changes.
 set -euo pipefail
 
+# The certificate keeps its original label from before the project was renamed
+# to f1-claude-pet: the CN is cosmetic, and replacing the cert would create a
+# new code identity — dropping the Accessibility grant it exists to preserve.
 NAME="F1DockPet Dev"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 

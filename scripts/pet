@@ -25,11 +25,11 @@ while [ -L "$SOURCE" ]; do
 done
 ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
 
-BIN="$ROOT/.build/debug/F1DockPet"
-APP="$ROOT/F1DockPet.app"
+BIN="$ROOT/.build/debug/F1ClaudePet"
+APP="$ROOT/F1ClaudePet.app"
 
 build() { (cd "$ROOT" && swift build); }
-stop()  { pkill -f 'F1DockPet' 2>/dev/null || true; sleep 0.3; }
+stop()  { pkill -f 'F1ClaudePet' 2>/dev/null || true; sleep 0.3; }
 
 # Fully detach: nohup + closed stdio + disown. Without all three the pet stays
 # in the caller's process group, so anything that kills the calling shell — a
@@ -46,7 +46,7 @@ start() {
     stop
     open -a "$APP"
     sleep 1
-    echo "pet running (pid $(pgrep -f F1DockPet | head -1))"
+    echo "pet running (pid $(pgrep -f F1ClaudePet | head -1))"
 }
 
 rebuild() {
@@ -54,9 +54,9 @@ rebuild() {
     stop
     open -a "$APP"
     sleep 1
-    echo "pet rebuilt and running (pid $(pgrep -f F1DockPet | head -1))"
+    echo "pet rebuilt and running (pid $(pgrep -f F1ClaudePet | head -1))"
     echo "note: rebuilding re-signs the app, so macOS may have dropped its"
-    echo "      Accessibility grant. Re-tick F1DockPet in System Settings →"
+    echo "      Accessibility grant. Re-tick F1ClaudePet in System Settings →"
     echo "      Privacy & Security → Accessibility if the car stops tracking"
     echo "      the Dock exactly."
 }

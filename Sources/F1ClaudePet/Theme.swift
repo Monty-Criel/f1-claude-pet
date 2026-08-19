@@ -57,7 +57,7 @@ enum ThemeColor: String, CaseIterable {
 /// Convenience accessors, so nothing else has to know about `ThemeColor`.
 enum Theme {
     /// Posted when the accent changes; views repaint on it.
-    static let changed = Notification.Name("F1DockPetThemeChanged")
+    static let changed = Notification.Name("F1ClaudePetThemeChanged")
 
     static var accent: NSColor { ThemeColor.selected.color }
 
