@@ -109,22 +109,9 @@ enum StateChannel {
         return derivedName(id: id)
     }
 
+    /// One transcript resolver for the whole app — Transcript owns it.
     private static func transcriptURL(id: String, cwd: String) -> URL? {
-        let claude = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/projects")
-
-        // Project folders are the cwd with path separators turned into dashes.
-        let slug = cwd.replacingOccurrences(of: "/", with: "-")
-        let direct = claude.appendingPathComponent(slug).appendingPathComponent("\(id).jsonl")
-        if FileManager.default.fileExists(atPath: direct.path) { return direct }
-
-        // Otherwise look through every project folder for this session.
-        guard let projects = try? FileManager.default.contentsOfDirectory(
-            at: claude, includingPropertiesForKeys: nil) else { return nil }
-        for project in projects {
-            let candidate = project.appendingPathComponent("\(id).jsonl")
-            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
-        }
-        return nil
+        Transcript.url(id: id, cwd: cwd)
     }
 
     /// Scan the last chunk of a transcript for the most recent `customTitle`.
