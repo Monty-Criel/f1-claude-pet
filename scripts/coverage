@@ -4,13 +4,16 @@
 #   scripts/coverage           print a per-file report and the total
 #   scripts/coverage --badge   also regenerate docs/coverage.svg
 #   scripts/coverage --check   fail if total coverage is below THRESHOLD
+#   scripts/coverage --verify-badge   fail if docs/coverage.svg is off by >1pt
+#                              (numeric tolerance: llvm-cov differs slightly
+#                              across toolchains, so byte-exact diffing flakes)
 #
 # There is no XCTest bundle here (XCTest needs Xcode; this project builds with
 # the Command Line Tools), so coverage comes from running the app's own
 # `--self-test` entry point under an instrumented build.
 set -euo pipefail
 
-THRESHOLD=${THRESHOLD:-45}
+THRESHOLD=${THRESHOLD:-70}
 
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
@@ -78,6 +81,17 @@ print('#e05d44' if p < 50 else '#dfb317' if p < 75 else '#4c1')")
 </svg>
 SVG
     echo "wrote docs/coverage.svg"
+fi
+
+if [[ "${1:-}" == "--verify-badge" ]]; then
+    BADGE=$(grep -o 'coverage: [0-9.]*%' docs/coverage.svg | head -1 | grep -o '[0-9.]*')
+    python3 -c "
+import sys
+badge, total = float('$BADGE' or 0), float('$TOTAL')
+if abs(badge - total) > 1.0:
+    print(f'badge says {badge}% but coverage measures {total}% — run scripts/coverage --badge')
+    sys.exit(1)
+print(f'badge {badge}% is within 1pt of measured {total}%')"
 fi
 
 if [[ "${1:-}" == "--check" ]]; then

@@ -30,7 +30,7 @@ enum UsageService {
 
     private(set) static var rows: [Row] = []
     private(set) static var error: String?
-    private(set) static var fetchedAt: Date?
+    static var fetchedAt: Date?
     private static var lastFetch: Date = .distantPast
     private static var inFlight = false
     private static var loadedCache = false
@@ -44,7 +44,7 @@ enum UsageService {
     private static let cacheLifetime: TimeInterval = 30 * 60
 
     private static var cacheFile: URL {
-        URL(fileURLWithPath: NSHomeDirectory() + "/.f1-claude-pet/usage.json")
+        StateChannel.directory.appendingPathComponent("usage.json")
     }
 
     /// Refresh if the cache is stale. `onChange` fires only when new data (or a
@@ -102,7 +102,7 @@ enum UsageService {
 
     /// Keeps the last good numbers across restarts, so opening the tab shows
     /// something immediately instead of triggering a keychain read.
-    private static func saveCache() {
+    static func saveCache() {
         let payload: [String: Any] = [
             "fetchedAt": (fetchedAt ?? Date()).timeIntervalSince1970,
             "rows": rows.map { row -> [String: Any] in
@@ -118,7 +118,7 @@ enum UsageService {
         try? data.write(to: cacheFile, options: .atomic)
     }
 
-    private static func loadCache() {
+    static func loadCache() {
         guard let data = try? Data(contentsOf: cacheFile),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let stamp = json["fetchedAt"] as? TimeInterval,
@@ -260,9 +260,16 @@ enum UsageService {
         let isToday: Bool
     }
 
+    /// Overridable for tests; the app always reads the real history.
+    nonisolated(unsafe) static var historyFile =
+        URL(fileURLWithPath: NSHomeDirectory() + "/.claude/history.jsonl")
+
     private static var statCache: [Stat] = []
     private static var histCache: [DayBar] = []
     private static var statsComputed: Date = .distantPast
+
+    /// Drop the memoised stats so tests observe a fresh computation.
+    static func invalidateStats() { statsComputed = .distantPast }
 
     static func weekHistogram() -> [DayBar] {
         _ = stats()          // shares the cache; stats() recomputes both
@@ -284,7 +291,7 @@ enum UsageService {
         // the same pass feeds the weekly histogram.
         var promptsToday = 0, promptsWeek = 0
         var perDay: [Date: Int] = [:]
-        if let text = try? String(contentsOfFile: home + "/.claude/history.jsonl", encoding: .utf8) {
+        if let text = try? String(contentsOf: historyFile, encoding: .utf8) {
             for line in text.split(separator: "\n") {
                 guard let data = line.data(using: .utf8),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -301,7 +308,7 @@ enum UsageService {
         // Sessions and their footprint, from the transcripts on disk.
         var sessionsToday = 0, sessionsWeek = 0, sessionsTotal = 0
         var bytes: Int64 = 0
-        let projects = URL(fileURLWithPath: home).appendingPathComponent(".claude/projects")
+        let projects = Transcript.projectsRoot
         if let walker = FileManager.default.enumerator(
             at: projects, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]) {
             for case let url as URL in walker where url.pathExtension == "jsonl" {
@@ -379,7 +386,7 @@ enum UsageService {
     /// Monday-to-Sunday of the current week. Past days show real counts;
     /// future days get an estimate from past same-weekday averages, falling
     /// back to the overall daily mean when a weekday has no history yet.
-    private static func buildHistogram(perDay: [Date: Int], calendar: Calendar) -> [DayBar] {
+    static func buildHistogram(perDay: [Date: Int], calendar: Calendar) -> [DayBar] {
         var iso = Calendar(identifier: .iso8601)   // weeks start on Monday
         iso.timeZone = calendar.timeZone
         let today = calendar.startOfDay(for: Date())

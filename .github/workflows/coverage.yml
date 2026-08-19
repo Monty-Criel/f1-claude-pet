@@ -23,10 +23,8 @@ jobs:
       - name: Run coverage
         run: ./scripts/coverage --check
 
-      - name: Regenerate badge
-        run: ./scripts/coverage --badge
-
-      # The badge is committed, so a change here means someone moved coverage
-      # without refreshing it. Same guard boxbox-labs uses.
+      # The badge is committed; verify it numerically rather than by byte
+      # diff — llvm-cov's counts drift fractionally across toolchains, so an
+      # exact-match check flakes on version skew. One point of drift fails.
       - name: Verify coverage badge is current
-        run: git diff --exit-code -- docs/coverage.svg
+        run: ./scripts/coverage --verify-badge

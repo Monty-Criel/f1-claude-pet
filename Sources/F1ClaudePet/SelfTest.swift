@@ -60,6 +60,11 @@ enum SelfTest {
         stateChannel()
         sessionDiscovery()
         usageFormatting()
+        usageCacheAndStats()
+        histogram()
+        sessionTitles()
+        stateWatcher()
+        themeNotifications()
 
         let total = passed + failures.count
         for failure in failures { print("FAIL  \(failure)") }
@@ -373,6 +378,164 @@ enum SelfTest {
         // Direct URL resolution through the same root.
         check(Transcript.url(id: "s1", cwd: "/anything") != nil,
               "sessions: url falls back to scanning folders")
+    }
+
+    /// The usage cache codec and the local stats, against fixture roots.
+    private static func usageCacheAndStats() {
+        let scratch = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("f1-usage-\(ProcessInfo.processInfo.processIdentifier)")
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let savedProjects = Transcript.projectsRoot
+        let savedHistory = UsageService.historyFile
+        StateChannel.rootOverride = scratch
+        defer {
+            StateChannel.rootOverride = nil
+            Transcript.projectsRoot = savedProjects
+            UsageService.historyFile = savedHistory
+            UsageService.invalidateStats()
+            try? FileManager.default.removeItem(at: scratch)
+        }
+
+        // Cache round-trip, including the money row's value text.
+        let cachePayload: [String: Any] = [
+            "fetchedAt": Date().timeIntervalSince1970 - 300,
+            "rows": [
+                ["label": "5-hour limit", "percent": 35, "resets": "resets in 3 h"],
+                ["label": "Usage credits", "percent": 25, "resets": "",
+                 "valueText": "$2.50 of $10.00"],
+            ],
+        ]
+        let data = try? JSONSerialization.data(withJSONObject: cachePayload)
+        try? data?.write(to: scratch.appendingPathComponent("usage.json"))
+        UsageService.loadCache()
+        equal(UsageService.rows.count, 2, "cache: rows load from disk")
+        equal(UsageService.rows.last?.valueText, "$2.50 of $10.00",
+              "cache: money text survives the round-trip")
+        check(UsageService.freshnessNote.contains("min ago"),
+              "cache: freshness note reflects the load")
+        UsageService.saveCache()
+        UsageService.loadCache()
+        equal(UsageService.rows.count, 2, "cache: save and reload is stable")
+
+        // Local stats over fixture history + projects.
+        let projects = scratch.appendingPathComponent("projects/proj-x")
+        try? FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try? #"{"customTitle":"Fixture","cwd":"/tmp/x"}"#
+            .write(to: projects.appendingPathComponent("s9.jsonl"),
+                   atomically: true, encoding: .utf8)
+        Transcript.projectsRoot = scratch.appendingPathComponent("projects")
+
+        let now = Date().timeIntervalSince1970
+        let history = (0..<3).map {
+            #"{"display":"p\#($0)","timestamp":\#(Int((now - Double($0) * 40) * 1000))}"#
+        } + [#"{"display":"old","timestamp":\#(Int((now - 3 * 86_400) * 1000))}"#]
+        UsageService.historyFile = scratch.appendingPathComponent("history.jsonl")
+        try? history.joined(separator: "\n")
+            .write(to: UsageService.historyFile, atomically: true, encoding: .utf8)
+
+        UsageService.invalidateStats()
+        let stats = UsageService.stats()
+        let prompts = stats.first { $0.label == "Prompts" }
+        equal(prompts?.value.hasPrefix("3 today") ?? false, true,
+              "stats: today's prompts counted")
+        check(prompts?.value.contains("4 this week") ?? false,
+              "stats: the week includes older days")
+        let sessions = stats.first { $0.label == "Sessions" }
+        check(sessions?.value.contains("1 total") ?? false,
+              "stats: fixture session counted")
+        check(stats.contains { $0.label == "Busiest day" }, "stats: busiest day present")
+        check(stats.contains { $0.label == "Current car" }, "stats: pet colour included")
+    }
+
+    /// The Monday-to-Sunday histogram over synthetic per-day counts.
+    private static func histogram() {
+        var calendar = Calendar.current
+        calendar.firstWeekday = 2
+
+        // Activity today and further back, so past and future rows both exist.
+        let today = calendar.startOfDay(for: Date())
+        var perDay: [Date: Int] = [today: 5]
+        for daysBack in 1...21 {
+            if let day = calendar.date(byAdding: .day, value: -daysBack, to: today) {
+                perDay[day] = 3
+            }
+        }
+        let bars = UsageService.buildHistogram(perDay: perDay, calendar: calendar)
+        equal(bars.count, 7, "histogram: seven days, always")
+        equal(bars.filter(\.isToday).count, 1, "histogram: exactly one today")
+        check(bars.allSatisfy { $0.count >= 0 }, "histogram: no negative bars")
+        // Whatever is after today must be a projection, never a count.
+        if let todayIndex = bars.firstIndex(where: \.isToday) {
+            check(bars.suffix(from: bars.index(after: todayIndex)).allSatisfy(\.projected),
+                  "histogram: future days are estimates")
+        }
+        // Empty history: no crash, and projections are all zero.
+        let empty = UsageService.buildHistogram(perDay: [:], calendar: calendar)
+        equal(empty.count, 7, "histogram: empty history still shapes a week")
+        check(empty.allSatisfy { $0.count == 0 }, "histogram: nothing means zero")
+    }
+
+    /// Session titles resolved from a fixture transcript.
+    private static func sessionTitles() {
+        let scratch = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("f1-titles-\(ProcessInfo.processInfo.processIdentifier)")
+        let saved = Transcript.projectsRoot
+        Transcript.projectsRoot = scratch
+        defer {
+            Transcript.projectsRoot = saved
+            try? FileManager.default.removeItem(at: scratch)
+        }
+        let dir = scratch.appendingPathComponent("proj-t")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? #"{"customTitle":"Named session","cwd":"/tmp/t"}"#
+            .write(to: dir.appendingPathComponent("t1.jsonl"),
+                   atomically: true, encoding: .utf8)
+
+        equal(StateChannel.readSessionTitle(id: "t1", cwd: "/tmp/t"), "Named session",
+              "titles: customTitle wins")
+        check(StateChannel.readSessionTitle(id: "missing", cwd: "/tmp/t") == nil
+              || StateChannel.readSessionTitle(id: "missing", cwd: "/tmp/t")?.isEmpty == false,
+              "titles: a missing session does not crash")
+    }
+
+    /// The watcher actually fires when the state file changes.
+    private static func stateWatcher() {
+        let scratch = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("f1-watch-\(ProcessInfo.processInfo.processIdentifier)")
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        StateChannel.rootOverride = scratch
+        defer {
+            StateChannel.rootOverride = nil
+            try? FileManager.default.removeItem(at: scratch)
+        }
+
+        var seen: [PetState] = []
+        let watcher = StateWatcher { state, _ in seen.append(state) }
+        watcher.start()
+        StateChannel.write(.boost, message: "tool ran")
+        let deadline = Date().addingTimeInterval(2)
+        while seen.isEmpty && Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        watcher.stop()
+        equal(seen.first, .boost, "watcher: a state write reaches the callback")
+    }
+
+    /// Changing the theme announces itself; the palette stays self-consistent.
+    private static func themeNotifications() {
+        let saved = ThemeColor.selected
+        defer { ThemeColor.selected = saved }
+
+        var announced = false
+        let token = NotificationCenter.default.addObserver(
+            forName: Theme.changed, object: nil, queue: nil) { _ in announced = true }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        ThemeColor.selected = .teal
+        check(announced, "theme: selection posts the change notification")
+        equal(ThemeColor.selected, .teal, "theme: selection persists")
+        check(Theme.accent == ThemeColor.teal.color, "theme: accent follows selection")
+        check(Theme.accentBright != Theme.accent, "theme: bright variant differs")
     }
 
     /// Reset-time formatting for the usage rows.
