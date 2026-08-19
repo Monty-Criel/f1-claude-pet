@@ -60,3 +60,8 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# LLVM coverage exhaust — dropped by instrumented binaries run outside the
+# coverage script (e.g. a plain `pet test` after `pet coverage`).
+*.profraw
+*.profdata

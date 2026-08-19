@@ -7,6 +7,34 @@ if CommandLine.arguments.contains("--self-test") {
     exit(SelfTest.run())
 }
 
+// `--export-gif <path> [--car id] [--seconds N] [--fps N]` renders the demo
+// clip headlessly. Used for the README hero GIF.
+if let i = CommandLine.arguments.firstIndex(of: "--export-gif") {
+    let path = CommandLine.arguments.count > i + 1
+        ? CommandLine.arguments[i + 1] : "/tmp/f1-claude-pet.gif"
+    let carId = CommandLine.arguments.firstIndex(of: "--car")
+        .flatMap { CommandLine.arguments.count > $0 + 1 ? CommandLine.arguments[$0 + 1] : nil }
+    let seconds = CommandLine.arguments.firstIndex(of: "--seconds")
+        .flatMap { CommandLine.arguments.count > $0 + 1 ? Double(CommandLine.arguments[$0 + 1]) : nil } ?? 9
+    let fps = CommandLine.arguments.firstIndex(of: "--fps")
+        .flatMap { CommandLine.arguments.count > $0 + 1 ? Int(CommandLine.arguments[$0 + 1]) : nil } ?? 20
+    let car = carId.flatMap { CarRegistry.car(id: $0) }
+    let ok = GifRecorder.record(to: path, car: car, seconds: seconds, fps: fps)
+    if ok { print("wrote \(path)") }
+    exit(ok ? 0 : 1)
+}
+
+// `--export-sound <radio|launch> <path>` writes a clip to WAV for auditioning.
+if let i = CommandLine.arguments.firstIndex(of: "--export-sound") {
+    guard CommandLine.arguments.count > i + 2,
+          let clip = SoundEngine.Clip(rawValue: CommandLine.arguments[i + 1]) else {
+        FileHandle.standardError.write(Data("usage: --export-sound radio|launch <path>\n".utf8))
+        exit(1)
+    }
+    let path = CommandLine.arguments[i + 2]
+    exit(SoundSynth.export(clip, to: path) ? 0 : 1)
+}
+
 // `--probe` reports what the app can work out about the Dock and exits.
 // Useful for diagnosing geometry without staring at a moving car.
 if CommandLine.arguments.contains("--probe") {

@@ -1,7 +1,8 @@
 import AppKit
+import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
 
     /// Vertical room above the Dock: the car, plus headroom for tyre smoke
     /// and the radio bubble.
@@ -46,6 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Listen for state pushed in by Claude Code hooks.
         let watcher = StateWatcher { [weak self] state, message in
             self?.trackView.apply(state, message: message)
+            self?.noteStateForAlerts(state)
+            SoundEngine.shared.play(for: state)
         }
         watcher.start()
         stateWatcher = watcher
@@ -82,8 +85,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             setSecondCar(ref)
         }
 
+        UNUserNotificationCenter.current().delegate = self
+
+        SoundEngine.shared.warmUp()
+
         if let existing = StateChannel.read() { trackView.apply(existing) }
         trackView.start()
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completion: @escaping () -> Void) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                NSApp.activate(ignoringOtherApps: true)
+                self.chat?.show()
+            }
+        }
+        completion()
     }
 
     /// The window rectangle: full width of the Dock straight, sitting directly
@@ -96,8 +115,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       height: Self.trackHeight)
     }
 
+    /// Persisted from the menu: hide the pet entirely while a full-screen app
+    /// covers the display, instead of riding along its bottom edge.
+    static var hideInFullScreen: Bool {
+        get { UserDefaults.standard.bool(forKey: "hideInFullScreen") }
+        set { UserDefaults.standard.set(newValue, forKey: "hideInFullScreen") }
+    }
+    private var hiddenForFullScreen = false
+
+    // MARK: - box box escalation
+
+    private var waitingSince: Date?
+    private var boxBoxFired = false
+
+    /// Track how long the live session has been waiting on the user.
+    private func noteStateForAlerts(_ state: PetState) {
+        if state == .waiting {
+            if waitingSince == nil { waitingSince = Date() }
+        } else {
+            waitingSince = nil
+            boxBoxFired = false
+            menuBar?.setAlert(false)
+        }
+    }
+
+    /// Checked from the existing 1 Hz tick. Fires once per waiting episode.
+    private func checkBoxBox() {
+        guard BoxBoxAlert.shouldEscalate(waitingSince: waitingSince,
+                                         alreadyFired: boxBoxFired,
+                                         enabled: BoxBoxAlert.isEnabled) else { return }
+        boxBoxFired = true
+        menuBar?.setAlert(true)
+
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }   // degrade to the icon alone
+            let content = UNMutableNotificationContent()
+            content.title = "Box box — Claude is waiting"
+            let session = StateChannel.readSession()
+            let title = session.flatMap { StateChannel.readSessionTitle(id: $0.id, cwd: $0.cwd) }
+            content.body = (title ?? "A session") + " has been waiting over 2 minutes for your input."
+            center.add(UNNotificationRequest(identifier: "boxbox",
+                                             content: content, trigger: nil))
+        }
+    }
+
     private func followDock() {
         let dock = DockGeometry.current()
+
+        // Optionally disappear while an app is full screen. Ordering out and
+        // back loses relative z, so the second window is re-slotted on return.
+        let shouldHide = Self.hideInFullScreen && dock.fullScreen
+        if shouldHide != hiddenForFullScreen {
+            hiddenForFullScreen = shouldHide
+            if shouldHide {
+                window.orderOut(nil)
+                secondWindow?.orderOut(nil)
+            } else {
+                window.orderFrontRegardless()
+                secondWindow?.orderFrontRegardless()
+                secondWindow?.order(.below, relativeTo: window.windowNumber)
+            }
+        }
+        if shouldHide { return }
+
+        // The car wears the Dock's size: a small Dock gets a small car. The
+        // last measured height sticks while the Dock is hidden or covered, so
+        // the car never balloons or vanishes on transient states.
+        if let height = dock.tileHeight {
+            let scale = TrackView.scale(forDockHeight: height)
+            trackView.setScale(scale)
+            secondView?.setScale(scale)
+        }
 
         // Without an exact measurement the window spans the whole screen and
         // we cannot know where the Dock actually starts and ends — so keep the
@@ -105,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         trackView.laneAnchor = dock.measured ? .right : .centre
 
         writeStatus(dock)
+        checkBoxBox()
 
         let target = trackFrame(for: dock)
         if window.frame != target {

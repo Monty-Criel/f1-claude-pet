@@ -11,6 +11,12 @@ struct DockFrame {
     let edge: Edge
     /// True when the rect was measured for real; false when we fell back to a guess.
     let measured: Bool
+    /// The Dock strip's real height when measured — survives the full-screen
+    /// substitution below, so the car can keep its size while the Dock is
+    /// covered. `nil` when the geometry was guessed.
+    var tileHeight: CGFloat?
+    /// True when a full-screen app is covering this display.
+    var fullScreen: Bool = false
 
     enum Edge: String {
         case bottom, left, right
@@ -48,7 +54,11 @@ enum DockGeometry {
     /// (exact, and survives magnification / autohide / display moves), then
     /// degrades gracefully so the pet still runs without the permission.
     static func current() -> DockFrame {
-        let base = viaAccessibility() ?? viaVisibleFrame() ?? hiddenFallback()
+        var base = viaAccessibility() ?? viaVisibleFrame() ?? hiddenFallback()
+        // The strip height only means anything when it was actually measured
+        // and the Dock is on screen.
+        base.tileHeight = (base.measured && !base.isHidden && base.rect.height > 24)
+            ? base.rect.height : nil
 
         // A full-screen app hides the Dock whatever the auto-hide setting says,
         // but the Dock keeps reporting its normal on-screen rect through the
@@ -56,10 +66,13 @@ enum DockGeometry {
         // where the Dock *would* be, well above the bottom of the screen.
         if hasFullScreenWindow(on: base.screen) {
             let f = base.screen.frame
-            return DockFrame(rect: CGRect(x: f.minX, y: f.minY, width: f.width, height: 0),
-                             screen: base.screen,
-                             edge: .bottom,
-                             measured: base.measured)
+            var frame = DockFrame(rect: CGRect(x: f.minX, y: f.minY, width: f.width, height: 0),
+                                  screen: base.screen,
+                                  edge: .bottom,
+                                  measured: base.measured)
+            frame.tileHeight = base.tileHeight   // size survives being covered
+            frame.fullScreen = true
+            return frame
         }
         return base
     }

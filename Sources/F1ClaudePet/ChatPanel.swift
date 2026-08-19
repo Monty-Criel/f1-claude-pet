@@ -282,6 +282,10 @@ final class ChatController: NSObject {
 
     func toggle() { panel.isVisible ? close() : open() }
 
+    /// Open if closed; leave alone if already showing. For the notification
+    /// click, where toggling would close a panel the user was reading.
+    func show() { if !panel.isVisible { open() } }
+
     func close() {
         refresh?.invalidate(); refresh = nil
         follow?.invalidate(); follow = nil

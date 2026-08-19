@@ -53,6 +53,9 @@ enum SelfTest {
         themePalette()
         petStates()
         carRegistry()
+        dockScaling()
+        boxBoxEscalation()
+        gifChoreography()
 
         let total = passed + failures.count
         for failure in failures { print("FAIL  \(failure)") }
@@ -224,6 +227,54 @@ enum SelfTest {
         // A failure is called a crash in the menu — "spin" reads as recovery.
         equal(PetState.spin.displayName, "Crash", "state: spin presents as Crash")
         check(PetState.allCases.count >= 7, "state: every hook event has a state")
+    }
+
+    /// The box-box escalation decision: once per waiting episode, after the
+    /// threshold, only while enabled.
+    private static func boxBoxEscalation() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let early = start.addingTimeInterval(BoxBoxAlert.threshold - 1)
+        let late = start.addingTimeInterval(BoxBoxAlert.threshold + 1)
+
+        equal(BoxBoxAlert.shouldEscalate(waitingSince: start, alreadyFired: false,
+                                         enabled: true, now: late),
+              true, "boxbox: fires after the threshold")
+        equal(BoxBoxAlert.shouldEscalate(waitingSince: start, alreadyFired: false,
+                                         enabled: true, now: early),
+              false, "boxbox: quiet before the threshold")
+        equal(BoxBoxAlert.shouldEscalate(waitingSince: start, alreadyFired: true,
+                                         enabled: true, now: late),
+              false, "boxbox: fires once per episode")
+        equal(BoxBoxAlert.shouldEscalate(waitingSince: start, alreadyFired: false,
+                                         enabled: false, now: late),
+              false, "boxbox: disabled means silent")
+        equal(BoxBoxAlert.shouldEscalate(waitingSince: nil, alreadyFired: false,
+                                         enabled: true, now: late),
+              false, "boxbox: nothing waiting, nothing fired")
+    }
+
+    /// The gif show: ordered cues, opening with lights out, captions fixed —
+    /// never read from the user's transcript.
+    private static func gifChoreography() {
+        let cues = GifRecorder.choreography
+        check(cues.first?.state == .launch, "gif: the show opens with lights out")
+        check(cues.contains { $0.state == .victory }, "gif: the show ends on a win")
+        let times = cues.map(\.time)
+        equal(times, times.sorted(), "gif: cues are in playing order")
+        check(times.allSatisfy { $0 < 9 }, "gif: every cue fits the default duration")
+    }
+
+    /// The Dock-height → sprite-scale mapping.
+    private static func dockScaling() {
+        // The anchor: the size the art was tuned at.
+        equal(TrackView.scale(forDockHeight: 84), 2.25, "scale: 84pt Dock is the 2.25 anchor")
+        // Clamps at both ends — a tiny or giant Dock still gets a usable car.
+        equal(TrackView.scale(forDockHeight: 20), 1.0, "scale: floor at 1.0")
+        equal(TrackView.scale(forDockHeight: 400), 3.5, "scale: ceiling at 3.5")
+        // Quantised to 0.25 steps so magnification twitch can't flap the raster.
+        equal(TrackView.scale(forDockHeight: 90), 2.5, "scale: quantised to quarter steps")
+        let steps = TrackView.scale(forDockHeight: 60) * 4
+        equal(steps, steps.rounded(), "scale: always lands on a quarter step")
     }
 
     /// The garage: ids have to be unique, since the menu and the saved

@@ -32,6 +32,22 @@ final class MenuBarController {
     private let speedSlider = NSSlider()
     private let speedLabel = NSTextField(labelWithString: "")
 
+    /// Swap the checkered flag for an alert while a session waits on the user.
+    func setAlert(_ on: Bool) {
+        guard let button = statusItem.button else { return }
+        if on {
+            button.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
+                                   accessibilityDescription: "Claude is waiting")
+            button.image?.isTemplate = true
+            button.contentTintColor = .systemOrange
+        } else {
+            button.image = NSImage(systemSymbolName: "flag.checkered",
+                                   accessibilityDescription: "F1 Claude Pet")
+            button.image?.isTemplate = true
+            button.contentTintColor = nil
+        }
+    }
+
     init(trackView: TrackView, onQuit: @escaping () -> Void) {
         self.trackView = trackView
         self.onQuit = onQuit
@@ -184,6 +200,22 @@ final class MenuBarController {
         menu.addItem(speedItem)
 
         // Behaviour
+        let hideFS = item("Hide in full screen", #selector(toggleHideInFullScreen))
+        hideFS.state = AppDelegate.hideInFullScreen ? .on : .off
+        hideFS.toolTip = "Disappear entirely while an app is full screen, "
+            + "instead of riding along its bottom edge."
+        menu.addItem(hideFS)
+
+        let boxbox = item("Box box alerts", #selector(toggleBoxBox))
+        boxbox.state = BoxBoxAlert.isEnabled ? .on : .off
+        boxbox.subtitle = "Notify when Claude waits over 2 min"
+        menu.addItem(boxbox)
+
+        let sound = item("Sound effects", #selector(toggleSound))
+        sound.state = SoundEngine.isEnabled ? .on : .off
+        sound.subtitle = "Radio call on box box, engine on launch"
+        menu.addItem(sound)
+
         let lively = item("Lively mode", #selector(toggleLively))
         lively.state = (trackView?.livelyMode ?? false) ? .on : .off
         lively.toolTip = "Full-Dock laps and bigger smoke. Off by default so the pet "
@@ -308,6 +340,22 @@ final class MenuBarController {
         rebuild()
     }
 
+    @objc private func toggleBoxBox() {
+        BoxBoxAlert.isEnabled.toggle()
+        if !BoxBoxAlert.isEnabled { setAlert(false) }
+        rebuild()
+    }
+
+    @objc private func toggleSound() {
+        SoundEngine.isEnabled.toggle()
+        rebuild()
+    }
+
+    @objc private func toggleHideInFullScreen() {
+        AppDelegate.hideInFullScreen.toggle()
+        rebuild()
+    }
+
     @objc private func toggleLively() {
         trackView?.livelyMode.toggle()
         rebuild()
@@ -317,6 +365,7 @@ final class MenuBarController {
         guard let raw = sender.representedObject as? String,
               let state = PetState(rawValue: raw) else { return }
         trackView?.apply(state)
+        SoundEngine.shared.play(for: state)
     }
 
     /// Relaunch in place.
