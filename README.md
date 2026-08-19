@@ -1,8 +1,8 @@
-# 🏎️ f1-dock-pet
+# 🏎️ f1-claude-pet
 
 **A Formula 1 car that lives on your macOS Dock and races when Claude Code works.**
 
-[![Tests](https://github.com/Monty-Criel/f1-dock-pet/actions/workflows/tests.yml/badge.svg)](https://github.com/Monty-Criel/f1-dock-pet/actions/workflows/tests.yml)
+[![Tests](https://github.com/Monty-Criel/f1-claude-pet/actions/workflows/tests.yml/badge.svg)](https://github.com/Monty-Criel/f1-claude-pet/actions/workflows/tests.yml)
 ![Coverage](docs/coverage.svg)
 
 > **Beta — v0.9.0.** It runs all day on the author's machine, but expect rough
@@ -27,8 +27,8 @@ type a reply in the pit wall, which is exactly like typing it into Claude Code.
 Needs **macOS 15+**, Xcode command line tools, and Claude Code.
 
 ```bash
-git clone https://github.com/Monty-Criel/f1-dock-pet.git ~/Documents/GitHub/f1-dock-pet
-cd ~/Documents/GitHub/f1-dock-pet
+git clone https://github.com/Monty-Criel/f1-claude-pet.git ~/Documents/GitHub/f1-claude-pet
+cd ~/Documents/GitHub/f1-claude-pet
 ./scripts/setup-signing.sh   # one-time: stable identity so macOS keeps its permissions
 ./scripts/pet rebuild        # build, bundle and launch
 ```
@@ -60,12 +60,12 @@ The car needs hooks in `~/.claude/settings.json` to know what Claude is doing:
 ```json
 {
   "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-dock-pet/scripts/hook SessionStart",     "timeout": 5 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-dock-pet/scripts/hook UserPromptSubmit", "timeout": 5 }] }],
-    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-dock-pet/scripts/hook PostToolUse",      "timeout": 5 }] }],
-    "Notification":     [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-dock-pet/scripts/hook Notification",     "timeout": 5 }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-dock-pet/scripts/hook Stop",             "timeout": 5 }] }],
-    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-dock-pet/scripts/hook SessionEnd",       "timeout": 5 }] }]
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook SessionStart",     "timeout": 5 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook UserPromptSubmit", "timeout": 5 }] }],
+    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook PostToolUse",      "timeout": 5 }] }],
+    "Notification":     [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook Notification",     "timeout": 5 }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook Stop",             "timeout": 5 }] }],
+    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook SessionEnd",       "timeout": 5 }] }]
   }
 }
 ```
@@ -76,8 +76,8 @@ nothing and always exits 0, so it can never interfere with your work.
 ### Start it with your terminal
 
 ```bash
-echo 'pgrep -qf F1DockPet || open ~/Documents/GitHub/f1-dock-pet/F1DockPet.app' >> ~/.zshrc
-echo 'alias pet="~/Documents/GitHub/f1-dock-pet/scripts/pet"' >> ~/.zshrc
+echo 'pgrep -qf F1DockPet || open ~/Documents/GitHub/f1-claude-pet/F1DockPet.app' >> ~/.zshrc
+echo 'alias pet="~/Documents/GitHub/f1-claude-pet/scripts/pet"' >> ~/.zshrc
 ```
 
 ---
