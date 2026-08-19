@@ -152,18 +152,16 @@ enum SoundSynth {
         return buffer(from: samples)
     }
 
-    // MARK: - radio: squelch, band-limited voice, squelch
+    // MARK: - radio: the transmission squelch, voice-free
 
+    /// Just the click-click of a radio keying open and closed. The earlier
+    /// synthesised "box box" voice is gone by request — a speech synthesiser
+    /// through a radio filter is still a speech synthesiser.
     static func radioClip() -> AVAudioPCMBuffer? {
-        let open = squelch()
-        let close = squelch()
-        let voice = radioVoice() ?? []
         var assembled: [Float] = []
-        assembled.append(contentsOf: open)
-        assembled.append(contentsOf: [Float](repeating: 0, count: Int(0.06 * sampleRate)))
-        assembled.append(contentsOf: voice)
-        assembled.append(contentsOf: [Float](repeating: 0, count: Int(0.05 * sampleRate)))
-        assembled.append(contentsOf: close)
+        assembled.append(contentsOf: squelch())
+        assembled.append(contentsOf: [Float](repeating: 0, count: Int(0.16 * sampleRate)))
+        assembled.append(contentsOf: squelch())
         return buffer(from: assembled)
     }
 
@@ -180,127 +178,6 @@ enum SoundSynth {
             out[i] = Float((sin(2 * .pi * 1750 * t) * 0.8 + noise * 0.5) * env * 0.5)
         }
         return out
-    }
-
-    /// "Box box, box box" — synthesised, then pushed through the radio chain:
-    /// band-limit to ~300–3000 Hz, Apple's `.speechRadioTower` distortion, and
-    /// a hiss bed underneath.
-    private static func radioVoice() -> [Float]? {
-        guard let raw = capturedSpeech() else { return nil }
-
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        let engine = AVAudioEngine()
-        let player = AVAudioPlayerNode()
-        let eq = AVAudioUnitEQ(numberOfBands: 2)
-        let distortion = AVAudioUnitDistortion()
-
-        eq.bands[0].filterType = .highPass
-        eq.bands[0].frequency = 320
-        eq.bands[0].bypass = false
-        eq.bands[1].filterType = .lowPass
-        eq.bands[1].frequency = 2900
-        eq.bands[1].bypass = false
-        distortion.loadFactoryPreset(.speechRadioTower)
-        distortion.wetDryMix = 55
-
-        engine.attach(player); engine.attach(eq); engine.attach(distortion)
-        engine.connect(player, to: eq, format: format)
-        engine.connect(eq, to: distortion, format: format)
-        engine.connect(distortion, to: engine.mainMixerNode, format: format)
-
-        do {
-            try engine.enableManualRenderingMode(.offline, format: format,
-                                                 maximumFrameCount: 4096)
-            try engine.start()
-        } catch { return nil }
-
-        player.scheduleBuffer(raw, at: nil)
-        player.play()
-
-        let total = AVAudioFrameCount(raw.frameLength) + AVAudioFrameCount(0.2 * sampleRate)
-        guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: total)
-        else { return nil }
-
-        while out.frameLength < total {
-            let toRender = min(4096, total - out.frameLength)
-            guard let chunk = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: toRender),
-                  (try? engine.renderOffline(toRender, to: chunk)) == .success
-            else { break }
-            append(chunk, to: out)
-        }
-        engine.stop()
-
-        guard let channel = out.floatChannelData else { return nil }
-        var samples = Array(UnsafeBufferPointer(start: channel[0],
-                                                count: Int(out.frameLength)))
-        // Hiss bed under the whole transmission — radios are never silent.
-        var rng: UInt64 = 0xF00DFACE
-        for i in samples.indices {
-            rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17
-            let noise = Float(Int64(bitPattern: rng % 2000) - 1000) / 1000.0
-            samples[i] = samples[i] * 1.6 + noise * 0.025
-        }
-        return samples
-    }
-
-    /// Render the phrase with the speech synthesiser into a PCM buffer,
-    /// converted to the working format. Blocks its (background) thread.
-    private static func capturedSpeech() -> AVAudioPCMBuffer? {
-        let utterance = AVSpeechUtterance(string: "Box box, box box.")
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
-        utterance.rate = 0.48
-        utterance.pitchMultiplier = 0.85
-
-        // The synthesiser delivers buffers via a run loop, so a blocking
-        // semaphore starves it — pump the loop instead. State is guarded: the
-        // callback may arrive on an internal queue.
-        let synthesizer = AVSpeechSynthesizer()
-        let lock = NSLock()
-        nonisolated(unsafe) var chunks: [AVAudioPCMBuffer] = []
-        nonisolated(unsafe) var finished = false
-
-        synthesizer.write(utterance) { buffer in
-            lock.lock(); defer { lock.unlock() }
-            guard let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 else {
-                finished = true
-                return
-            }
-            chunks.append(pcm)
-        }
-        let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline {
-            lock.lock(); let isDone = finished; lock.unlock()
-            if isDone { break }
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-        }
-        lock.lock(); defer { lock.unlock() }
-        guard let first = chunks.first else { return nil }
-
-        // Concatenate in the synthesiser's native format...
-        let native = first.format
-        let totalFrames = chunks.reduce(AVAudioFrameCount(0)) { $0 + $1.frameLength }
-        guard let joined = AVAudioPCMBuffer(pcmFormat: native, frameCapacity: totalFrames)
-        else { return nil }
-        for chunk in chunks { append(chunk, to: joined) }
-
-        // ...then convert to the working format in one pass.
-        let target = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        guard native != target else { return joined }
-        guard let converter = AVAudioConverter(from: native, to: target) else { return nil }
-        let capacity = AVAudioFrameCount(Double(totalFrames)
-            * (sampleRate / native.sampleRate) + 1024)
-        guard let converted = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity)
-        else { return nil }
-
-        var fed = false
-        var error: NSError?
-        converter.convert(to: converted, error: &error) { _, status in
-            if fed { status.pointee = .endOfStream; return nil }
-            fed = true
-            status.pointee = .haveData
-            return joined
-        }
-        return error == nil ? converted : nil
     }
 
     // MARK: - plumbing
