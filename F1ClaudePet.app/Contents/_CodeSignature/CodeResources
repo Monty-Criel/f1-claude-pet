@@ -8,6 +8,14 @@
 		<data>
 		6Xh6yt2hv6aD3KBr6t8zn7T62Tk=
 		</data>
+		<key>Resources/Sounds/launch.m4a</key>
+		<data>
+		1TNf6gm20mD9dDxBUehLTYl6MqI=
+		</data>
+		<key>Resources/Sounds/victory.m4a</key>
+		<data>
+		Ya2AXi43Nt9P9ffOMHDNIPhjNeo=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -16,6 +24,20 @@
 			<key>hash2</key>
 			<data>
 			g53t5Kbh/qlA5N3z0ZCmQXP5HngDUmyso/3I0Blx61o=
+			</data>
+		</dict>
+		<key>Resources/Sounds/launch.m4a</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			J6iHSiOEYzs70Ij6Jp1vu+VFyzkWvL++LBiB6aDMAmI=
+			</data>
+		</dict>
+		<key>Resources/Sounds/victory.m4a</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			1vGOR82rcLjGLcx+RtIlvIGKnAXeOMz8gjuzey2iJTw=
 			</data>
 		</dict>
 	</dict>
