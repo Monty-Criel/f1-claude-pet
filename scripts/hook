@@ -14,7 +14,7 @@
 #      ~5ms binary call.
 set -u
 
-BIN="$HOME/Documents/GitHub/f1-dock-pet/.build/debug/F1DockPet"
+BIN="$HOME/Documents/GitHub/f1-claude-pet/.build/debug/F1ClaudePet"
 EVENT="${1:-}"
 
 # Pet not built or not installed: do nothing at all, silently.
@@ -27,9 +27,9 @@ PAYLOAD=$(cat 2>/dev/null) || PAYLOAD=''
 # an empty id — some events carry no session in their payload.
 SID=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null) || SID=''
 if [ -n "$SID" ]; then
-    mkdir -p "$HOME/.f1-dock-pet" 2>/dev/null || true
+    mkdir -p "$HOME/.f1-claude-pet" 2>/dev/null || true
     printf '%s' "$PAYLOAD" | jq -r '"\(.session_id)\n\(.cwd // "")"' \
-        > "$HOME/.f1-dock-pet/session" 2>/dev/null || true
+        > "$HOME/.f1-claude-pet/session" 2>/dev/null || true
 fi
 
 notify() {
@@ -62,8 +62,8 @@ case "$EVENT" in
     UserPromptSubmit)
         # Stamp the start of the turn so the pit wall can show elapsed time
         # without asking anyone. Pure shell — no extra process.
-        mkdir -p "$HOME/.f1-dock-pet" 2>/dev/null || true
-        date +%s > "$HOME/.f1-dock-pet/turn-start" 2>/dev/null || true
+        mkdir -p "$HOME/.f1-claude-pet" 2>/dev/null || true
+        date +%s > "$HOME/.f1-claude-pet/turn-start" 2>/dev/null || true
         notify launch
         ;;
     Notification)

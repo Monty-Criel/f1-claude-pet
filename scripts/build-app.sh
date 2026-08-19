@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assemble F1DockPet.app around the SwiftPM binary.
+# Assemble F1ClaudePet.app around the SwiftPM binary.
 #
 # Why this exists: macOS will not display an NSStatusItem for a process that
 # isn't a bundled application. The status item is created quite happily and
@@ -10,14 +10,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${1:-debug}"
-APP="$ROOT/F1DockPet.app"
-BIN="$ROOT/.build/$CONFIG/F1DockPet"
+APP="$ROOT/F1ClaudePet.app"
+BIN="$ROOT/.build/$CONFIG/F1ClaudePet"
 
 (cd "$ROOT" && swift build -c "$CONFIG")
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/F1DockPet"
+cp "$BIN" "$APP/Contents/MacOS/F1ClaudePet"
 
 # Icon, rendered from the same sprite the pet drives so the two never drift.
 ICONSET="$(mktemp -d)/AppIcon.iconset"
@@ -36,11 +36,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>              <string>F1DockPet</string>
-    <key>CFBundleDisplayName</key>       <string>F1 Dock Pet</string>
-    <key>CFBundleExecutable</key>        <string>F1DockPet</string>
+    <key>CFBundleName</key>              <string>F1ClaudePet</string>
+    <key>CFBundleDisplayName</key>       <string>F1 Claude Pet</string>
+    <key>CFBundleExecutable</key>        <string>F1ClaudePet</string>
     <key>CFBundleIconFile</key>          <string>AppIcon</string>
-    <key>CFBundleIdentifier</key>        <string>com.nibel.f1dockpet</string>
+    <key>CFBundleIdentifier</key>        <string>com.nibel.f1claudepet</string>
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.9.0-beta</string>
     <key>CFBundleVersion</key>           <string>1</string>
@@ -56,6 +56,9 @@ PLIST
 # scripts/setup-signing.sh). TCC keys the Accessibility grant on the signing
 # identity: with the certificate it survives rebuilds; with ad-hoc fallback it
 # is revoked on every rebuild and macOS re-prompts.
+# "F1DockPet Dev" is the signing cert label, kept from before the rename —
+# the label is invisible and swapping certs would needlessly change the code
+# identity that the Accessibility grant is anchored to.
 IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
     | awk -F'"' '/F1DockPet Dev/{print $2; exit}')
 if [ -n "$IDENTITY" ]; then

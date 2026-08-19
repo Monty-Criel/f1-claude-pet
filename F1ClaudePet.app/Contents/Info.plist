@@ -2,11 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>              <string>F1DockPet</string>
-    <key>CFBundleDisplayName</key>       <string>F1 Dock Pet</string>
-    <key>CFBundleExecutable</key>        <string>F1DockPet</string>
+    <key>CFBundleName</key>              <string>F1ClaudePet</string>
+    <key>CFBundleDisplayName</key>       <string>F1 Claude Pet</string>
+    <key>CFBundleExecutable</key>        <string>F1ClaudePet</string>
     <key>CFBundleIconFile</key>          <string>AppIcon</string>
-    <key>CFBundleIdentifier</key>        <string>com.nibel.f1dockpet</string>
+    <key>CFBundleIdentifier</key>        <string>com.nibel.f1claudepet</string>
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.9.0-beta</string>
     <key>CFBundleVersion</key>           <string>1</string>

@@ -42,13 +42,13 @@ A car should appear on your Dock, and a 🏁 icon in your menu bar.
 
 | Grant | What it buys | Where |
 |---|---|---|
-| **Accessibility** | The car measures your Dock exactly and parks flush against it. Without it, it falls back to an estimate that's usually a few pixels off. | System Settings → Privacy & Security → Accessibility → tick **F1DockPet** |
+| **Accessibility** | The car measures your Dock exactly and parks flush against it. Without it, it falls back to an estimate that's usually a few pixels off. | System Settings → Privacy & Security → Accessibility → tick **F1ClaudePet** |
 | **Keychain** | The Usage tab reads your Claude Code OAuth token to fetch plan limits (a billing query — no tokens spent). macOS prompts on first use; choose **Always Allow**. | Prompt appears on first click |
 
 Check what it actually has:
 
 ```bash
-cat ~/.f1-dock-pet/status
+cat ~/.f1-claude-pet/status
 ```
 
 `accessibility: true` and `measured: true` means you're set.
@@ -63,6 +63,7 @@ The car needs hooks in `~/.claude/settings.json` to know what Claude is doing:
     "SessionStart":     [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook SessionStart",     "timeout": 5 }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook UserPromptSubmit", "timeout": 5 }] }],
     "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook PostToolUse",      "timeout": 5 }] }],
+    "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook PostToolUseFailure", "timeout": 5 }] }],
     "Notification":     [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook Notification",     "timeout": 5 }] }],
     "Stop":             [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook Stop",             "timeout": 5 }] }],
     "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook SessionEnd",       "timeout": 5 }] }]
@@ -76,7 +77,7 @@ nothing and always exits 0, so it can never interfere with your work.
 ### Start it with your terminal
 
 ```bash
-echo 'pgrep -qf F1DockPet || open ~/Documents/GitHub/f1-claude-pet/F1DockPet.app' >> ~/.zshrc
+echo 'pgrep -qf F1ClaudePet || open ~/Documents/GitHub/f1-claude-pet/F1ClaudePet.app' >> ~/.zshrc
 echo 'alias pet="~/Documents/GitHub/f1-claude-pet/scripts/pet"' >> ~/.zshrc
 ```
 
@@ -139,7 +140,7 @@ pet victory          # trigger any state by hand:
 Add a specific car or finer pixels to a sprite export:
 
 ```bash
-.build/debug/F1DockPet --export-sprite out.png --car sf26 --detail 3 --zoom 4
+.build/debug/F1ClaudePet --export-sprite out.png --car sf26 --detail 3 --zoom 4
 ```
 
 ## Tests
@@ -148,7 +149,7 @@ Add a specific car or finer pixels to a sprite export:
 pet test
 ```
 
-The suite lives inside the app module and runs via `F1DockPet --self-test`,
+The suite lives inside the app module and runs via `F1ClaudePet --self-test`,
 rather than as an XCTest bundle. XCTest ships with Xcode, and this project
 builds with the Command Line Tools alone — an XCTest target would mean nobody
 could run the tests on a machine that can perfectly well build the app.
@@ -171,13 +172,13 @@ The window sits at Dock level + 1, click-through except over the car itself, and
 follows your Dock across displays — including full-screen apps and Split View.
 Dock geometry comes from the Accessibility API when granted, with two fallbacks.
 
-Hooks write one word to `~/.f1-dock-pet/state`; the app polls that file and
+Hooks write one word to `~/.f1-claude-pet/state`; the app polls that file and
 animates. Session titles, conversation text and context usage are read from
 Claude Code's own transcripts in `~/.claude/projects/`, tail-read so a 59 MB
 file costs nothing.
 
 ```
-Sources/F1DockPet/
+Sources/F1ClaudePet/
   AppDelegate.swift      window lifecycle, Dock following, second car
   TrackView.swift        driving physics, states, smoke, radio bubble
   ChatPanel.swift        the pit wall: conversation, replies, usage

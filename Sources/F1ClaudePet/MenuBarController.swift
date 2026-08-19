@@ -39,7 +39,7 @@ final class MenuBarController {
 
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "flag.checkered",
-                                   accessibilityDescription: "F1 Dock Pet")
+                                   accessibilityDescription: "F1 Claude Pet")
             button.image?.isTemplate = true
         }
         rebuild()

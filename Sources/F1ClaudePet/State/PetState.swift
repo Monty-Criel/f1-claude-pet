@@ -49,7 +49,7 @@ enum PetState: String, CaseIterable {
 enum StateChannel {
 
     static var directory: URL {
-        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".f1-dock-pet")
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".f1-claude-pet")
     }
 
     static var file: URL {
@@ -169,7 +169,7 @@ enum StateChannel {
     /// When the current turn started, stamped by the `UserPromptSubmit` hook.
     /// Lets the pit wall show elapsed time without polling anything.
     static func turnStart() -> Date? {
-        let path = NSHomeDirectory() + "/.f1-dock-pet/turn-start"
+        let path = NSHomeDirectory() + "/.f1-claude-pet/turn-start"
         guard let raw = try? String(contentsOfFile: path, encoding: .utf8),
               let seconds = TimeInterval(raw.trimmingCharacters(in: .whitespacesAndNewlines))
         else { return nil }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The test suite, run with `pet test` (or `F1DockPet --self-test`).
+/// The test suite, run with `pet test` (or `F1ClaudePet --self-test`).
 ///
 /// Tests live inside the app module rather than in an XCTest bundle on
 /// purpose: XCTest ships with Xcode, and this project builds with the Command

@@ -23,7 +23,7 @@ cd "$ROOT"
 
 PROFRAW="$ROOT/.build/coverage.profraw"
 PROFDATA="$ROOT/.build/coverage.profdata"
-BIN="$ROOT/.build/debug/F1DockPet"
+BIN="$ROOT/.build/debug/F1ClaudePet"
 
 swift build -Xswiftc -profile-generate -Xswiftc -profile-coverage-mapping >/dev/null
 
@@ -35,12 +35,12 @@ xcrun llvm-profdata merge -sparse "$PROFRAW" -o "$PROFDATA"
 # window code would bury a real regression in noise from files nothing
 # exercises — the same reason boxbox-labs lists explicit `include` paths.
 COVERED=(
-    Sources/F1DockPet/State/Transcript.swift
-    Sources/F1DockPet/State/UsageService.swift
-    Sources/F1DockPet/State/PetState.swift
-    Sources/F1DockPet/Cars/Tyres.swift
-    Sources/F1DockPet/Cars/CarRegistry.swift
-    Sources/F1DockPet/Theme.swift
+    Sources/F1ClaudePet/State/Transcript.swift
+    Sources/F1ClaudePet/State/UsageService.swift
+    Sources/F1ClaudePet/State/PetState.swift
+    Sources/F1ClaudePet/Cars/Tyres.swift
+    Sources/F1ClaudePet/Cars/CarRegistry.swift
+    Sources/F1ClaudePet/Theme.swift
 )
 
 xcrun llvm-cov report "$BIN" -instr-profile="$PROFDATA" "${COVERED[@]}" \
