@@ -34,7 +34,11 @@ final class SoundEngine {
 
     private var launchBuffer: AVAudioPCMBuffer?
     private var radioBuffer: AVAudioPCMBuffer?
+    private var victoryBuffer: AVAudioPCMBuffer?
     private var preparing = false
+    /// The victory burnout fires on every Stop event; the clip only plays as
+    /// often as the donut does.
+    private var lastVictorySound: Date = .distantPast
 
     // MARK: - playback
 
@@ -43,15 +47,23 @@ final class SoundEngine {
         switch state {
         case .launch:  play(bufferFor: .launch)
         case .waiting: play(bufferFor: .radio)
+        case .victory:
+            guard Date().timeIntervalSince(lastVictorySound) > 60 else { return }
+            lastVictorySound = Date()
+            play(bufferFor: .victory)
         default:       break
         }
     }
 
-    enum Clip: String { case launch, radio }
+    enum Clip: String { case launch, radio, victory }
 
     private func play(bufferFor clip: Clip) {
         prepareIfNeeded()
-        let buffer = clip == .launch ? launchBuffer : radioBuffer
+        let buffer: AVAudioPCMBuffer? = switch clip {
+        case .launch:  launchBuffer
+        case .radio:   radioBuffer
+        case .victory: victoryBuffer
+        }
         guard let buffer else { return }      // still synthesising: skip quietly
 
         if !started {
@@ -73,10 +85,15 @@ final class SoundEngine {
         guard launchBuffer == nil || radioBuffer == nil, !preparing else { return }
         preparing = true
         Task.detached(priority: .utility) {
-            let launch = SoundSynth.launchClip()
+            // Real recordings first — a 1996 Williams V10 launch and a 2006
+            // Red Bull V10 burnout (CC BY-SA, see Resources/Sounds/CREDITS.md)
+            // — with the synthesised engine as the no-assets fallback.
+            let launch = SoundSynth.bundledClip("launch") ?? SoundSynth.launchClip()
+            let victory = SoundSynth.bundledClip("victory")
             let radio = SoundSynth.radioClip()
             await MainActor.run {
                 self.launchBuffer = launch
+                self.victoryBuffer = victory
                 self.radioBuffer = radio
                 self.preparing = false
             }
@@ -92,6 +109,39 @@ final class SoundEngine {
 enum SoundSynth {
 
     static let sampleRate: Double = 44_100
+
+    /// A bundled recording, mono, in the engine's working format. The app
+    /// bundle carries them under Resources/Sounds; the bare CLI binary has no
+    /// bundle and falls back to synthesis.
+    static func bundledClip(_ name: String) -> AVAudioPCMBuffer? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "m4a",
+                                        subdirectory: "Sounds")
+            ?? Bundle.main.url(forResource: name, withExtension: "m4a")
+        else { return nil }
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        guard let raw = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                         frameCapacity: AVAudioFrameCount(file.length)),
+              (try? file.read(into: raw)) != nil
+        else { return nil }
+
+        let target = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+        if raw.format == target { return raw }
+        guard let converter = AVAudioConverter(from: raw.format, to: target),
+              let out = AVAudioPCMBuffer(pcmFormat: target,
+                                         frameCapacity: AVAudioFrameCount(
+                                            Double(raw.frameLength)
+                                            * sampleRate / raw.format.sampleRate + 1024))
+        else { return nil }
+        var fed = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if fed { status.pointee = .endOfStream; return nil }
+            fed = true
+            status.pointee = .haveData
+            return raw
+        }
+        return error == nil ? out : nil
+    }
 
     // MARK: - launch: a V10 pull with two upshifts
 
@@ -207,8 +257,9 @@ enum SoundSynth {
     static func export(_ clip: SoundEngine.Clip, to path: String) -> Bool {
         let buffer: AVAudioPCMBuffer?
         switch clip {
-        case .launch: buffer = launchClip()
-        case .radio:  buffer = radioClip()
+        case .launch:  buffer = bundledClip("launch") ?? launchClip()
+        case .radio:   buffer = radioClip()
+        case .victory: buffer = bundledClip("victory")
         }
         guard let buffer,
               let file = try? AVAudioFile(

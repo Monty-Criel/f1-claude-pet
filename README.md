@@ -216,6 +216,16 @@ positions, a rake value — plus a line in `CarRegistry.all`. No renderer change
   "no limit data", the field names moved.
 - The second car doesn't animate its own session yet; it shows its conversation.
 
+## Audio credits
+
+The launch and victory sounds are real V10 recordings by **Edvvc (Ed Pond)**,
+via Wikimedia Commons, licensed **CC BY-SA 3.0** — a 1996 Williams-Renault FW18
+launching and a 2006 Red Bull-Cosworth STR1 burnout, both at the Goodwood
+Festival of Speed. Unlike the rest of this repo (MIT), those two files remain
+CC BY-SA; details and links in
+[Resources/Sounds/CREDITS.md](Resources/Sounds/CREDITS.md). The box-box radio
+squelch and the fallback engine note are synthesised in-process.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
