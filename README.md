@@ -2,7 +2,7 @@
 
 **A Formula 1 car that lives on your macOS Dock and races when Claude Code works.**
 
-[![Tests](https://github.com/Nibel-Tech/f1-dock-pet/actions/workflows/tests.yml/badge.svg)](https://github.com/Nibel-Tech/f1-dock-pet/actions/workflows/tests.yml)
+[![Tests](https://github.com/Monty-Criel/f1-dock-pet/actions/workflows/tests.yml/badge.svg)](https://github.com/Monty-Criel/f1-dock-pet/actions/workflows/tests.yml)
 ![Coverage](docs/coverage.svg)
 
 > **Beta — v0.9.0.** It runs all day on the author's machine, but expect rough
@@ -27,7 +27,7 @@ type a reply in the pit wall, which is exactly like typing it into Claude Code.
 Needs **macOS 15+**, Xcode command line tools, and Claude Code.
 
 ```bash
-git clone https://github.com/Nibel-Tech/f1-dock-pet.git ~/Documents/GitHub/f1-dock-pet
+git clone https://github.com/Monty-Criel/f1-dock-pet.git ~/Documents/GitHub/f1-dock-pet
 cd ~/Documents/GitHub/f1-dock-pet
 ./scripts/setup-signing.sh   # one-time: stable identity so macOS keeps its permissions
 ./scripts/pet rebuild        # build, bundle and launch
