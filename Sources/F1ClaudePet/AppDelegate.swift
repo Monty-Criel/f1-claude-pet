@@ -75,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         // Right-clicking the car does the same thing as the menu item.
         trackView.onPitHomeToggled = { [weak self] in self?.togglePitHome() }
+        menuBar?.onCarSizeChanged = { [weak self] in self?.applyScale() }
         menuBar?.onChatSizeChanged = { [weak self] size in
             self?.chat?.setSize(size)
             self?.secondChat?.setSize(size)
@@ -122,6 +123,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         set { UserDefaults.standard.set(newValue, forKey: "hideInFullScreen") }
     }
     private var hiddenForFullScreen = false
+    /// Last real Dock strip height, kept so the size slider can re-apply
+    /// immediately instead of waiting for the next measurement.
+    private var lastTileHeight: CGFloat?
+
+    func applyScale() {
+        let scale = TrackView.effectiveScale(dockHeight: lastTileHeight)
+        trackView.setScale(scale)
+        secondView?.setScale(scale)
+    }
 
     // MARK: - box box escalation
 
@@ -182,11 +192,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // The car wears the Dock's size: a small Dock gets a small car. The
         // last measured height sticks while the Dock is hidden or covered, so
         // the car never balloons or vanishes on transient states.
-        if let height = dock.tileHeight {
-            let scale = TrackView.scale(forDockHeight: height)
-            trackView.setScale(scale)
-            secondView?.setScale(scale)
-        }
+        if let height = dock.tileHeight { lastTileHeight = height }
+        applyScale()
 
         // Without an exact measurement the window spans the whole screen and
         // we cannot know where the Dock actually starts and ends — so keep the

@@ -420,6 +420,20 @@ enum SelfTest {
         equal(TrackView.scale(forDockHeight: 90), 2.5, "scale: quantised to quarter steps")
         let steps = TrackView.scale(forDockHeight: 60) * 4
         equal(steps, steps.rounded(), "scale: always lands on a quarter step")
+
+        // The user's size preference sits on top of the Dock-derived base.
+        let saved = TrackView.sizeFactor
+        defer { TrackView.sizeFactor = saved }
+        TrackView.sizeFactor = 1.0
+        equal(TrackView.effectiveScale(dockHeight: 84), 2.25,
+              "size: default preference leaves the base alone")
+        equal(TrackView.effectiveScale(dockHeight: nil), 2.25,
+              "size: no measurement falls back to the tuned base")
+        TrackView.sizeFactor = 2.0
+        equal(TrackView.effectiveScale(dockHeight: 84), 4.5,
+              "size: doubled preference doubles the car")
+        TrackView.sizeFactor = 5.0   // setter clamps
+        equal(TrackView.sizeFactor, 2.0, "size: preference clamped to sane range")
     }
 
     /// The garage: ids have to be unique, since the menu and the saved
