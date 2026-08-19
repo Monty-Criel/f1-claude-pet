@@ -292,6 +292,8 @@ enum Transcript {
         let kind: Kind
         let label: String
         let isRunning: Bool
+        /// When the call was made, where the record carried a timestamp.
+        var started: Date?
 
         var symbol: String { kind == .agent ? "\u{25B8}\u{25B8}" : "\u{2338}" }
     }
@@ -299,10 +301,20 @@ enum Transcript {
     /// Subagents and background shells from the recent transcript, oldest
     /// first. Running ones last, since those are what you are waiting on.
     static func agentRuns(id: String, cwd: String, limit: Int = 8) -> [AgentRun] {
-        var pending: [(id: String, kind: AgentRun.Kind, label: String)] = []
+        agentRuns(fromLines: tailLines(id: id, cwd: cwd), limit: limit)
+    }
+
+    /// Split out from the file reading so it can be exercised against known
+    /// transcript lines rather than whatever happens to be on disk.
+    static func agentRuns(fromLines lines: [String], limit: Int = 8,
+                          now: Date = Date()) -> [AgentRun] {
+        var pending: [(id: String, kind: AgentRun.Kind, label: String, started: Date?)] = []
         var finished = Set<String>()
 
-        for line in tailLines(id: id, cwd: cwd) {
+        for line in lines {
+            // Each record carries when it was written; used to drop work that
+            // finished long ago rather than let it sit there looking current.
+            let started = timestamp(in: line)
             // A background shell gets its tool_result the instant it starts —
             // that is only the acknowledgement. Its real completion arrives
             // later as a task notification quoting the original call's id.
@@ -331,12 +343,12 @@ enum Transcript {
                         let label = (input["description"] as? String)
                             ?? (input["subagent_type"] as? String)
                             ?? "subagent"
-                        pending.append((useId, .agent, label))
+                        pending.append((useId, .agent, label, started))
                     } else if name == "Bash", input["run_in_background"] as? Bool == true {
                         let label = (input["description"] as? String)
                             ?? (input["command"] as? String)
                             ?? "background shell"
-                        pending.append((useId, .background, String(label.prefix(46))))
+                        pending.append((useId, .background, String(label.prefix(46)), started))
                     }
 
                 case "tool_result":
@@ -354,12 +366,37 @@ enum Transcript {
         }
 
         let runs = pending.map {
-            AgentRun(kind: $0.kind, label: $0.label, isRunning: !finished.contains($0.id))
+            AgentRun(kind: $0.kind, label: $0.label,
+                     isRunning: !finished.contains($0.id), started: $0.started)
         }
-        // Anything still going is the point; completed work is context.
+        // Anything still going is the point. Finished work is context, and
+        // only while it is recent — an hour-old job left on screen reads as
+        // current activity when it is nothing of the sort.
         let running = runs.filter(\.isRunning)
-        let done = runs.filter { !$0.isRunning }
+        let done = runs.filter { run in
+            guard !run.isRunning else { return false }
+            // No timestamp is not evidence of age — keep it rather than
+            // silently hiding work that may well be relevant.
+            guard let started = run.started else { return true }
+            return now.timeIntervalSince(started) < staleAfter
+        }
         return Array((done.suffix(max(0, limit - running.count)) + running).suffix(limit))
+    }
+
+    /// How long finished work stays listed.
+    private static let staleAfter: TimeInterval = 30 * 60
+
+    /// The `timestamp` field every transcript record carries.
+    private static func timestamp(in line: String) -> Date? {
+        guard let range = line.range(of: "\"timestamp\":\"") else { return nil }
+        let rest = line[range.upperBound...]
+        guard let end = rest.firstIndex(of: "\"") else { return nil }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let text = String(rest[..<end])
+        if let date = iso.date(from: text) { return date }
+        iso.formatOptions = [.withInternetDateTime]
+        return iso.date(from: text)
     }
 
     /// Every value following `needle` up to `terminator`, for the handful of
@@ -419,7 +456,7 @@ enum Transcript {
     }
 
     /// A gerund for what Claude is up to, from the tool it last reached for.
-    private static func verb(for tool: String?) -> String {
+    static func verb(for tool: String?) -> String {
         switch tool ?? "" {
         case "Write":                      return "Creating"
         case "Edit", "NotebookEdit":       return "Editing"

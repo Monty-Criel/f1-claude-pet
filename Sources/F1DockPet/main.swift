@@ -1,5 +1,12 @@
 import AppKit
 
+// `--self-test` runs the in-module test suite and exits with its verdict.
+// Kept out of the app's normal startup path entirely: it never touches the
+// Dock, the windows or the state channel.
+if CommandLine.arguments.contains("--self-test") {
+    exit(SelfTest.run())
+}
+
 // `--probe` reports what the app can work out about the Dock and exits.
 // Useful for diagnosing geometry without staring at a moving car.
 if CommandLine.arguments.contains("--probe") {

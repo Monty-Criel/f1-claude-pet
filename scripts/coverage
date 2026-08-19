@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Run the test suite under coverage instrumentation and report line coverage.
+#
+#   scripts/coverage           print a per-file report and the total
+#   scripts/coverage --badge   also regenerate docs/coverage.svg
+#   scripts/coverage --check   fail if total coverage is below THRESHOLD
+#
+# There is no XCTest bundle here (XCTest needs Xcode; this project builds with
+# the Command Line Tools), so coverage comes from running the app's own
+# `--self-test` entry point under an instrumented build.
+set -euo pipefail
+
+THRESHOLD=${THRESHOLD:-28}
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [ "${SOURCE:0:1}" = "/" ] || SOURCE="$DIR/$SOURCE"
+done
+ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+cd "$ROOT"
+
+PROFRAW="$ROOT/.build/coverage.profraw"
+PROFDATA="$ROOT/.build/coverage.profdata"
+BIN="$ROOT/.build/debug/F1DockPet"
+
+swift build -Xswiftc -profile-generate -Xswiftc -profile-coverage-mapping >/dev/null
+
+rm -f "$PROFRAW" "$PROFDATA"
+LLVM_PROFILE_FILE="$PROFRAW" "$BIN" --self-test
+xcrun llvm-profdata merge -sparse "$PROFRAW" -o "$PROFDATA"
+
+# Only the logic the tests actually target. Reporting on the drawing and
+# window code would bury a real regression in noise from files nothing
+# exercises — the same reason boxbox-labs lists explicit `include` paths.
+COVERED=(
+    Sources/F1DockPet/State/Transcript.swift
+    Sources/F1DockPet/State/UsageService.swift
+    Sources/F1DockPet/State/PetState.swift
+    Sources/F1DockPet/Cars/Tyres.swift
+    Sources/F1DockPet/Cars/CarRegistry.swift
+    Sources/F1DockPet/Theme.swift
+)
+
+xcrun llvm-cov report "$BIN" -instr-profile="$PROFDATA" "${COVERED[@]}" \
+    -ignore-filename-regex='SelfTest'
+
+TOTAL=$(xcrun llvm-cov export "$BIN" -instr-profile="$PROFDATA" "${COVERED[@]}" \
+    -ignore-filename-regex='SelfTest' --summary-only \
+    | python3 -c 'import json,sys; print(round(json.load(sys.stdin)["data"][0]["totals"]["lines"]["percent"], 1))')
+
+echo "total line coverage: ${TOTAL}%"
+
+if [[ "${1:-}" == "--badge" ]]; then
+    mkdir -p docs
+    COLOUR=$(python3 -c "
+p = float('$TOTAL')
+print('#e05d44' if p < 50 else '#dfb317' if p < 75 else '#4c1')")
+    cat > docs/coverage.svg <<SVG
+<svg xmlns="http://www.w3.org/2000/svg" width="114" height="20" role="img" aria-label="coverage: ${TOTAL}%">
+  <title>coverage: ${TOTAL}%</title>
+  <linearGradient id="s" x2="0" y2="100%">
+    <stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/>
+  </linearGradient>
+  <clipPath id="r"><rect width="114" height="20" rx="3" fill="#fff"/></clipPath>
+  <g clip-path="url(#r)">
+    <rect width="63" height="20" fill="#555"/>
+    <rect x="63" width="51" height="20" fill="${COLOUR}"/>
+    <rect width="114" height="20" fill="url(#s)"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
+    <text x="32" y="15" fill="#010101" fill-opacity=".3">coverage</text>
+    <text x="32" y="14">coverage</text>
+    <text x="88" y="15" fill="#010101" fill-opacity=".3">${TOTAL}%</text>
+    <text x="88" y="14">${TOTAL}%</text>
+  </g>
+</svg>
+SVG
+    echo "wrote docs/coverage.svg"
+fi
+
+if [[ "${1:-}" == "--check" ]]; then
+    python3 -c "
+import sys
+total, threshold = float('$TOTAL'), float('$THRESHOLD')
+if total < threshold:
+    print(f'coverage {total}% is below the {threshold}% threshold')
+    sys.exit(1)
+print(f'coverage {total}% meets the {threshold}% threshold')"
+fi

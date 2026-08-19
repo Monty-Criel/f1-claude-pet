@@ -2,6 +2,9 @@
 
 **A Formula 1 car that lives on your macOS Dock and races when Claude Code works.**
 
+[![Tests](https://github.com/Monty-Criel/f1-dock-pet/actions/workflows/tests.yml/badge.svg)](https://github.com/Monty-Criel/f1-dock-pet/actions/workflows/tests.yml)
+![Coverage](docs/coverage.svg)
+
 > **Beta — v0.9.0.** It runs all day on the author's machine, but expect rough
 > edges, and expect things to move between versions.
 
@@ -24,7 +27,7 @@ type a reply in the pit wall, which is exactly like typing it into Claude Code.
 Needs **macOS 15+**, Xcode command line tools, and Claude Code.
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/f1-dock-pet.git ~/Documents/GitHub/f1-dock-pet
+git clone https://github.com/Monty-Criel/f1-dock-pet.git ~/Documents/GitHub/f1-dock-pet
 cd ~/Documents/GitHub/f1-dock-pet
 ./scripts/setup-signing.sh   # one-time: stable identity so macOS keeps its permissions
 ./scripts/pet rebuild        # build, bundle and launch
@@ -127,6 +130,8 @@ pet rebuild          # recompile, re-bundle, relaunch
 pet stop             # kill it
 pet probe            # print the Dock geometry it resolved
 pet sprite out.png   # export a magnified PNG of the current car
+pet test             # run the test suite
+pet coverage         # run tests under coverage and refresh docs/coverage.svg
 pet victory          # trigger any state by hand:
                      # idle launch racing boost waiting victory crash
 ```
@@ -136,6 +141,29 @@ Add a specific car or finer pixels to a sprite export:
 ```bash
 .build/debug/F1DockPet --export-sprite out.png --car sf26 --detail 3 --zoom 4
 ```
+
+## Tests
+
+```bash
+pet test
+```
+
+The suite lives inside the app module and runs via `F1DockPet --self-test`,
+rather than as an XCTest bundle. XCTest ships with Xcode, and this project
+builds with the Command Line Tools alone — an XCTest target would mean nobody
+could run the tests on a machine that can perfectly well build the app.
+
+It covers the logic that can be wrong quietly: transcript parsing, agent and
+background-work status, usage arithmetic, formatting, and the car registry.
+Drawing and window code is deliberately left alone — asserting on pixels is
+busywork when you can see the car on your Dock.
+
+```bash
+pet coverage
+```
+
+Runs the same suite under instrumentation and rewrites `docs/coverage.svg`.
+CI fails if coverage drops below the threshold, or if the badge is stale.
 
 ## Under the hood
 

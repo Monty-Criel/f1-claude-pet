@@ -151,7 +151,7 @@ enum UsageService {
 
     /// The endpoint's shape isn't documented, so parse structurally: anything
     /// carrying a `utilization` number is a limit row, wherever it nests.
-    private static func parse(_ json: [String: Any]) -> [Row] {
+    static func parse(_ json: [String: Any]) -> [Row] {
         let names: [String: (Int, String)] = [
             "five_hour": (0, "5-hour limit"),
             "seven_day": (1, "Weekly · all models"),
