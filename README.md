@@ -58,33 +58,40 @@ cat ~/.f1-claude-pet/status
 
 `accessibility: true` and `measured: true` means you're set.
 
-### Wire it to Claude Code
-
-The car needs hooks in `~/.claude/settings.json` to know what Claude is doing:
-
-```json
-{
-  "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook SessionStart",     "timeout": 5 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook UserPromptSubmit", "timeout": 5 }] }],
-    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook PostToolUse",      "timeout": 5 }] }],
-    "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook PostToolUseFailure", "timeout": 5 }] }],
-    "Notification":     [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook Notification",     "timeout": 5 }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook Stop",             "timeout": 5 }] }],
-    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "~/Documents/GitHub/f1-claude-pet/scripts/hook SessionEnd",       "timeout": 5 }] }]
-  }
-}
-```
-
-Each hook is a ~5 ms shell script that writes one word to a file. It prints
-nothing and always exits 0, so it can never interfere with your work.
-
-### Start it with your terminal
+### Wire it to Claude Code and your terminal
 
 ```bash
-echo 'pgrep -qf F1ClaudePet || open ~/Documents/GitHub/f1-claude-pet/F1ClaudePet.app' >> ~/.zshrc
-echo 'alias pet="~/Documents/GitHub/f1-claude-pet/scripts/pet"' >> ~/.zshrc
+./scripts/install.sh
 ```
+
+One idempotent script, three things:
+
+- **Hooks** — adds seven entries to `~/.claude/settings.json` (`SessionStart`,
+  `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `Notification`,
+  `Stop`, `SessionEnd`), each a ~5 ms shell script that writes one word to a
+  file. They print nothing and always exit 0, so they can never interfere
+  with your work. Everything else in your settings is left untouched — read
+  [scripts/install.sh](scripts/install.sh) to see the exact JSON it merges.
+- **Autostart + `pet` alias** — appended to the rc file of *your* shell:
+  `~/.zshrc` for zsh, `~/.bashrc` for bash (with the `.bash_profile` chain
+  macOS needs), `config.fish` in fish syntax for fish, `~/.profile` otherwise.
+- **`pet` on PATH** — a symlink in `~/.local/bin`, so the CLI works from any
+  shell, not just the one with the alias.
+
+## Uninstall
+
+```bash
+./scripts/uninstall.sh
+```
+
+Removes every trace: the running app, the seven hooks (the rest of your
+`~/.claude/settings.json` is preserved), the autostart lines from every shell
+rc file they could be in, the `pet` symlink, `~/.f1-claude-pet`, saved
+preferences, the Accessibility grant, and the self-signed certificate. Edited
+files get a `*.pet-uninstall.bak` backup next to them. It shows the plan and
+asks once before touching anything (`--yes` skips the question, `--dry-run`
+only prints what it would do). Deleting the cloned folder afterwards is the
+one step it leaves to you.
 
 ---
 

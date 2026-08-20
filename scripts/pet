@@ -15,6 +15,8 @@
 #   scripts/pet coverage       run tests under coverage and refresh the badge
 #   scripts/pet probe          print the Dock geometry it resolved
 #   scripts/pet sprite [path]  export a magnified PNG of the car
+#   scripts/pet install        wire hooks + shell autostart + PATH
+#   scripts/pet uninstall      remove every trace from this machine
 set -euo pipefail
 
 # Resolve symlinks before working out the repo root, so this still finds the
@@ -76,7 +78,9 @@ case "${1:-start}" in
   coverage) "$ROOT/scripts/coverage" "${2:---badge}" ;;
   probe)   build; "$BIN" --probe ;;
   sprite)  build; "$BIN" --export-sprite "${2:-/tmp/rb22.png}" ;;
+  install)   "$ROOT/scripts/install.sh" ;;
+  uninstall) shift; "$ROOT/scripts/uninstall.sh" "$@" ;;
   idle|launch|racing|boost|waiting|victory|spin|crash)
            "$BIN" --notify "$1" ;;
-  *)       sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 2 ;;
+  *)       sed -n '2,14p' "${BASH_SOURCE[0]}"; exit 2 ;;
 esac
