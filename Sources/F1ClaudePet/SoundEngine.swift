@@ -23,6 +23,21 @@ final class SoundEngine {
         set { UserDefaults.standard.set(newValue, forKey: "soundEffects") }
     }
 
+    /// Menu-slider volume, applied to the mixer. Defaults quiet on purpose:
+    /// the pet lives in your peripheral vision, not your headphones.
+    static var volume: Float {
+        get {
+            let stored = UserDefaults.standard.object(forKey: "soundVolume") as? Double
+            return Float(min(1.0, max(0.0, stored ?? 0.3)))
+        }
+        set { UserDefaults.standard.set(Double(min(1, max(0, newValue))), forKey: "soundVolume") }
+    }
+
+    /// Live-applies the current volume; safe before the engine has started.
+    func applyVolume() {
+        if started { engine.mainMixerNode.outputVolume = Self.volume }
+    }
+
     nonisolated static let sampleRate: Double = 44_100
     private static var format: AVAudioFormat {
         AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
@@ -69,10 +84,11 @@ final class SoundEngine {
         if !started {
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: Self.format)
-            engine.mainMixerNode.outputVolume = 0.3
+            engine.mainMixerNode.outputVolume = Self.volume
             guard (try? engine.start()) != nil else { return }
             started = true
         }
+        engine.mainMixerNode.outputVolume = Self.volume
         player.stop()
         player.scheduleBuffer(buffer, at: nil, options: .interrupts)
         player.play()

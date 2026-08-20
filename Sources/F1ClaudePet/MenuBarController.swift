@@ -36,6 +36,8 @@ final class MenuBarController {
     private let speedLabel = NSTextField(labelWithString: "")
     private let sizeSlider = NSSlider()
     private let sizeLabel = NSTextField(labelWithString: "")
+    private let volumeSlider = NSSlider()
+    private let volumeLabel = NSTextField(labelWithString: "")
 
     /// Swap the checkered flag for an alert while a session waits on the user.
     func setAlert(_ on: Bool) {
@@ -228,8 +230,13 @@ final class MenuBarController {
 
         let sound = item("Sound effects", #selector(toggleSound))
         sound.state = SoundEngine.isEnabled ? .on : .off
-        sound.subtitle = "Radio call on box box, engine on launch"
+        sound.subtitle = "V10 on launch and victory, squelch on box box"
         menu.addItem(sound)
+        if SoundEngine.isEnabled {
+            let volumeItem = NSMenuItem(title: "Volume", action: nil, keyEquivalent: "")
+            volumeItem.view = volumeView()
+            menu.addItem(volumeItem)
+        }
 
         let lively = item("Lively mode", #selector(toggleLively))
         lively.state = (trackView?.livelyMode ?? false) ? .on : .off
@@ -324,6 +331,47 @@ final class MenuBarController {
 
         updateSizeLabel()
         return view
+    }
+
+    private func volumeView() -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 44))
+        view.autoresizingMask = [.width]
+
+        let title = NSTextField(labelWithString: "Volume")
+        title.frame = NSRect(x: 21, y: 24, width: 80, height: 16)
+        title.font = .menuFont(ofSize: 13)
+        view.addSubview(title)
+
+        volumeLabel.frame = NSRect(x: view.bounds.width - 21 - 130, y: 24, width: 130, height: 16)
+        volumeLabel.autoresizingMask = [.minXMargin]
+        volumeLabel.alignment = .right
+        volumeLabel.font = .menuFont(ofSize: 11)
+        volumeLabel.textColor = .secondaryLabelColor
+        view.addSubview(volumeLabel)
+
+        volumeSlider.frame = NSRect(x: 21, y: 4, width: view.bounds.width - 42, height: 22)
+        volumeSlider.autoresizingMask = [.width]
+        volumeSlider.minValue = 0
+        volumeSlider.maxValue = 1
+        volumeSlider.doubleValue = Double(SoundEngine.volume)
+        volumeSlider.isContinuous = true
+        volumeSlider.target = self
+        volumeSlider.action = #selector(volumeChanged(_:))
+        view.addSubview(volumeSlider)
+
+        updateVolumeLabel()
+        return view
+    }
+
+    private func updateVolumeLabel() {
+        volumeLabel.stringValue = "\(Int((SoundEngine.volume * 100).rounded()))%"
+    }
+
+    /// Live while dragging — a volume is judged by ear, mid-clip.
+    @objc private func volumeChanged(_ sender: NSSlider) {
+        SoundEngine.volume = Float(sender.doubleValue)
+        SoundEngine.shared.applyVolume()
+        updateVolumeLabel()
     }
 
     private func updateSizeLabel() {
